@@ -88,6 +88,34 @@ npm run dev -- https://example.com --exclude-path '/tag/' --exclude-path '/page/
 npm run dev -- https://example.com --lighthouse --lighthouse-pages 3
 ```
 
+## Keyword Search
+
+Search for specific keywords across a site:
+
+```bash
+# Search for keywords
+npm run dev -- https://example.com --keyword "seo audit" --keyword "site speed"
+
+# Load keywords from a file (one per line, # comments supported)
+npm run dev -- https://example.com --keyword-file keywords.txt
+
+# Combine keyword search with term extraction
+npm run dev -- https://example.com --keyword-file keywords.txt --extract-terms --top-terms 30
+```
+
+## Offline Search
+
+Search pre-downloaded HTML files for faster repeated searches:
+
+```bash
+# Download a site with httrack
+httrack "https://example.com" -O "./site_backup"
+
+# Search the local copy (no network requests)
+npm run dev -- --from-directory ./site_backup --keyword-file keywords.txt
+npm run dev -- --from-directory ./site_backup --extract-terms
+```
+
 ## What The CLI Does
 
 The analyzer:
