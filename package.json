@@ -1,0 +1,20 @@
+{
+  "name": "seo-analysis",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A crawl-based SEO analysis CLI for auditing websites.",
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
+  }
+}

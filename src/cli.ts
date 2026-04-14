@@ -1,0 +1,350 @@
+import { writeFile } from "node:fs/promises";
+
+import { analyzeSite } from "./analyzer.js";
+import type { DuplicateGroup, SiteReport } from "./types.js";
+
+interface CliOptions {
+  concurrency: number;
+  excludePathPatterns: string[];
+  includePathPatterns: string[];
+  json: boolean;
+  maxPages: number;
+  outputPath: string | null;
+  retries: number;
+  seedSitemap: boolean;
+  timeoutMs: number;
+  urls: string[];
+}
+
+function printHelp(): void {
+  console.log(`SEO Analysis CLI
+
+Usage:
+  npm run dev -- <url> [more-urls] [options]
+
+Options:
+  --max-pages <number>     Maximum pages to crawl per site. Default: 10
+  --timeout-ms <number>    Request timeout in milliseconds. Default: 10000
+  --concurrency <number>   Number of pages to fetch in parallel. Default: 4
+  --retries <number>       Retry count for failed or retryable requests. Default: 2
+  --include-path <regex>   Only crawl discovered URLs whose path matches the regex
+  --exclude-path <regex>   Skip discovered URLs whose path matches the regex
+  --no-sitemap-seed        Do not seed the crawl queue from sitemap URLs
+  --json                   Print raw JSON instead of a text report
+  --output <file>          Write the final report to a file
+  --help                   Show this help
+
+Examples:
+  npm run dev -- https://example.com
+  npm run dev -- https://example.com --max-pages 25 --concurrency 6
+  npm run dev -- https://example.com --include-path '^/blog' --exclude-path '/tag/'
+  npm run dev -- https://example.com https://example.org --json --output report.json`);
+}
+
+function requireValue(args: string[], index: number, flag: string): string {
+  const value = args[index + 1];
+
+  if (!value || value.startsWith("--")) {
+    throw new Error(`Missing value for ${flag}.`);
+  }
+
+  return value;
+}
+
+function parseNumberValue(rawValue: string, flag: string): number {
+  const parsed = Number.parseInt(rawValue, 10);
+
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${flag} must be a valid integer.`);
+  }
+
+  return parsed;
+}
+
+function validatePatterns(patterns: string[], flag: string): void {
+  for (const pattern of patterns) {
+    try {
+      new RegExp(pattern);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown regex error";
+      throw new Error(`Invalid ${flag} pattern "${pattern}": ${message}`);
+    }
+  }
+}
+
+function parseArgs(argv: string[]): CliOptions {
+  const options: CliOptions = {
+    concurrency: 4,
+    excludePathPatterns: [],
+    includePathPatterns: [],
+    json: false,
+    maxPages: 10,
+    outputPath: null,
+    retries: 2,
+    seedSitemap: true,
+    timeoutMs: 10_000,
+    urls: []
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+
+    if (arg === "--help") {
+      printHelp();
+      process.exit(0);
+    }
+
+    if (arg === "--json") {
+      options.json = true;
+      continue;
+    }
+
+    if (arg === "--no-sitemap-seed") {
+      options.seedSitemap = false;
+      continue;
+    }
+
+    if (arg === "--max-pages") {
+      options.maxPages = parseNumberValue(requireValue(argv, index, "--max-pages"), "--max-pages");
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--max-pages=")) {
+      options.maxPages = parseNumberValue(arg.split("=")[1] ?? "", "--max-pages");
+      continue;
+    }
+
+    if (arg === "--timeout-ms") {
+      options.timeoutMs = parseNumberValue(
+        requireValue(argv, index, "--timeout-ms"),
+        "--timeout-ms"
+      );
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--timeout-ms=")) {
+      options.timeoutMs = parseNumberValue(arg.split("=")[1] ?? "", "--timeout-ms");
+      continue;
+    }
+
+    if (arg === "--concurrency") {
+      options.concurrency = parseNumberValue(
+        requireValue(argv, index, "--concurrency"),
+        "--concurrency"
+      );
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--concurrency=")) {
+      options.concurrency = parseNumberValue(arg.split("=")[1] ?? "", "--concurrency");
+      continue;
+    }
+
+    if (arg === "--retries") {
+      options.retries = parseNumberValue(requireValue(argv, index, "--retries"), "--retries");
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--retries=")) {
+      options.retries = parseNumberValue(arg.split("=")[1] ?? "", "--retries");
+      continue;
+    }
+
+    if (arg === "--include-path") {
+      options.includePathPatterns.push(requireValue(argv, index, "--include-path"));
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--include-path=")) {
+      options.includePathPatterns.push(arg.split("=")[1] ?? "");
+      continue;
+    }
+
+    if (arg === "--exclude-path") {
+      options.excludePathPatterns.push(requireValue(argv, index, "--exclude-path"));
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--exclude-path=")) {
+      options.excludePathPatterns.push(arg.split("=")[1] ?? "");
+      continue;
+    }
+
+    if (arg === "--output") {
+      options.outputPath = requireValue(argv, index, "--output");
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--output=")) {
+      options.outputPath = arg.split("=")[1] ?? null;
+      continue;
+    }
+
+    if (arg.startsWith("--")) {
+      throw new Error(`Unknown option: ${arg}`);
+    }
+
+    options.urls.push(arg);
+  }
+
+  if (options.urls.length === 0) {
+    throw new Error("Provide at least one website URL to analyze.");
+  }
+
+  if (!Number.isFinite(options.maxPages) || options.maxPages < 1) {
+    throw new Error("--max-pages must be a positive integer.");
+  }
+
+  if (!Number.isFinite(options.timeoutMs) || options.timeoutMs < 1) {
+    throw new Error("--timeout-ms must be a positive integer.");
+  }
+
+  if (!Number.isFinite(options.concurrency) || options.concurrency < 1) {
+    throw new Error("--concurrency must be a positive integer.");
+  }
+
+  if (!Number.isFinite(options.retries) || options.retries < 0) {
+    throw new Error("--retries must be zero or a positive integer.");
+  }
+
+  validatePatterns(options.includePathPatterns, "--include-path");
+  validatePatterns(options.excludePathPatterns, "--exclude-path");
+
+  return options;
+}
+
+function truncate(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
+function formatInfrastructure(report: SiteReport): string[] {
+  const lines = [
+    `robots.txt: ${report.infrastructure.robotsTxt.present ? "present" : "missing"}`
+  ];
+
+  if (report.infrastructure.robotsTxt.present) {
+    lines.push(`robots sitemap directives: ${report.infrastructure.robotsTxt.sitemaps.length}`);
+  }
+
+  lines.push(`sitemap.xml: ${report.infrastructure.sitemap.present ? "present" : "missing"}`);
+
+  if (report.infrastructure.sitemap.present) {
+    lines.push(`sitemap URLs detected: ${report.infrastructure.sitemap.urlCount}`);
+  }
+
+  return lines;
+}
+
+function formatDuplicateGroups(label: string, groups: DuplicateGroup[]): string[] {
+  if (groups.length === 0) {
+    return [];
+  }
+
+  return [
+    "",
+    `${label}:`,
+    ...groups.slice(0, 5).map((group) => `- ${group.count} pages: "${truncate(group.value, 90)}"`)
+  ];
+}
+
+function formatPage(page: SiteReport["pages"][number]): string {
+  const issuePreview =
+    page.issues.length > 0 ? page.issues.slice(0, 4).map((issue) => issue.code).join(", ") : "none";
+  const lines = [
+    `- ${page.finalUrl}`,
+    `  status=${page.status} words=${page.checks.wordCount} h1s=${page.checks.h1s.length} internal_links=${page.checks.internalLinks} issues=${page.issues.length}`,
+    `  title=${page.checks.titleLength || 0} chars description=${page.checks.metaDescriptionLength || 0} chars images_missing_alt=${page.checks.imagesMissingAlt}`,
+    `  top_issues=${issuePreview}`
+  ];
+
+  if (page.url !== page.finalUrl) {
+    lines.splice(1, 0, `  requested=${page.url}`);
+  }
+
+  return lines.join("\n");
+}
+
+function formatTextReport(report: SiteReport): string {
+  const topIssues =
+    report.summary.topIssues.length > 0
+      ? report.summary.topIssues.map((issue) => `${issue.code} (${issue.count})`).join(", ")
+      : "none";
+
+  const lines = [
+    `Site: ${report.startUrl}`,
+    `Crawled pages: ${report.summary.crawledPages}`,
+    `Issue totals: high=${report.summary.issueTotals.high} medium=${report.summary.issueTotals.medium} low=${report.summary.issueTotals.low}`,
+    `Pages with noindex: ${report.summary.pagesWithNoindex}`,
+    `Pages missing title: ${report.summary.pagesMissingTitle}`,
+    `Pages missing description: ${report.summary.pagesMissingDescription}`,
+    `Duplicate title groups: ${report.summary.duplicateTitles.length}`,
+    `Duplicate description groups: ${report.summary.duplicateMetaDescriptions.length}`,
+    `Top issues: ${topIssues}`,
+    ...formatInfrastructure(report),
+    ...formatDuplicateGroups("Duplicate Titles", report.summary.duplicateTitles),
+    ...formatDuplicateGroups("Duplicate Descriptions", report.summary.duplicateMetaDescriptions),
+    "",
+    "Pages:",
+    ...report.pages.map(formatPage)
+  ];
+
+  if (report.infrastructure.issues.length > 0) {
+    lines.push("", "Infrastructure issues:");
+    lines.push(...report.infrastructure.issues.map((issue) => `- ${issue.code}: ${issue.message}`));
+  }
+
+  return lines.join("\n");
+}
+
+async function maybeWriteOutput(outputPath: string | null, contents: string): Promise<void> {
+  if (!outputPath) {
+    return;
+  }
+
+  await writeFile(outputPath, contents, "utf8");
+}
+
+async function main(): Promise<void> {
+  try {
+    const options = parseArgs(process.argv.slice(2));
+    const reports: SiteReport[] = [];
+
+    for (const url of options.urls) {
+      reports.push(
+        await analyzeSite(url, {
+          concurrency: options.concurrency,
+          excludePathPatterns: options.excludePathPatterns,
+          includePathPatterns: options.includePathPatterns,
+          maxPages: options.maxPages,
+          retries: options.retries,
+          seedSitemap: options.seedSitemap,
+          timeoutMs: options.timeoutMs
+        })
+      );
+    }
+
+    const output = options.json
+      ? JSON.stringify(reports, null, 2)
+      : reports.map(formatTextReport).join("\n\n");
+
+    await maybeWriteOutput(options.outputPath, output);
+    console.log(output);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown CLI error";
+    console.error(`Error: ${message}`);
+    process.exitCode = 1;
+  }
+}
+
+await main();
