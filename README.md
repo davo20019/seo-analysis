@@ -4,9 +4,7 @@ This project is a crawl-based SEO CLI for auditing websites.
 
 It focuses on technical SEO issues that can be derived from the crawl itself, with optional Lighthouse support for a small set of pages.
 
-## Current Coverage
-
-The analyzer currently checks for:
+## What It Checks
 
 - missing, short, long, duplicate, and multiple title tags
 - missing, short, long, and duplicate meta descriptions
@@ -34,17 +32,6 @@ The analyzer currently checks for:
 - missing `sitemap.xml`
 - missing or empty `llms.txt`
 - optional Lighthouse audits for performance, accessibility, best practices, and SEO
-
-## Why TypeScript Here
-
-For this tool, TypeScript is still the right default:
-
-- one language for CLI logic, APIs, and a future dashboard
-- built-in `fetch` in modern Node versions
-- easy extension into Playwright or server-rendered crawling later
-- straightforward deployment to serverless or a hosted dashboard
-
-Python becomes more attractive once the project shifts toward heavier NLP, clustering, notebook workflows, or ML-based scoring.
 
 ## Quick Start
 
@@ -116,30 +103,22 @@ npm run dev -- --from-directory ./site_backup --keyword-file keywords.txt
 npm run dev -- --from-directory ./site_backup --extract-terms
 ```
 
-## What The CLI Does
+## Crawl Behavior
 
-The analyzer:
-
-- crawls up to `--max-pages` pages on the same site
-- can crawl every discovered sitemap URL with `--full-sitemap`
-- can sample representative sitemap URLs with `--sample-sitemap`
-- retries slow or retryable requests before failing
-- fetches multiple pages in parallel with `--concurrency`
+- crawls up to `--max-pages` pages, or the full sitemap with `--full-sitemap`
+- fetches pages in parallel with `--concurrency` (default: 6)
+- retries slow or retryable requests with exponential backoff
 - deduplicates redirected pages by final URL
-- can seed the crawl queue from sitemap URLs
-- collects known sitemap URLs for reconciliation, even when sitemap seeding is disabled
-- marks sitemap coverage as partial when the collected sitemap URL set is truncated
-- supports include and exclude regex filters for discovered paths
-- validates locale-specific `html lang` values
-- extracts and audits hreflang clusters
-- audits internal link integrity, anchor text quality, and incoming internal-link support
-- flags orphan candidates based on the crawled link graph
-- reports duplicate titles and descriptions site-wide
-- reports exact missing Open Graph fields instead of one generic issue
-- can optionally run Lighthouse on a configurable subset of crawled pages
+- seeds the crawl queue from `sitemap.xml` automatically
+- supports `--include-path` and `--exclude-path` regex filters
+- samples representative sitemap URLs with `--sample-sitemap`
 
 ## Notes And Limits
 
 - `--sample-sitemap` is useful when you want representative sitemap coverage quickly, but link-graph findings are less complete because the crawl is intentionally sampled.
 - Sitemap reconciliation relies on the set of sitemap URLs the CLI was able to collect. The report marks sitemap coverage as partial when that set was truncated.
 - Structured data support is currently presence-based. The CLI detects JSON-LD types, but it does not yet perform full schema validation.
+
+## License
+
+[MIT](LICENSE)
