@@ -44,6 +44,7 @@ export interface PageChecks {
     image: string | null;
   };
   schemaTypes: string[];
+  bodyText: string | null;
 }
 
 export interface KeywordLocationCounts {

@@ -1,5 +1,7 @@
 import { load } from "cheerio";
 
+import { buildKeywordSummary, extractTermFrequencies, matchKeywordsOnPage } from "./keywords.js";
+import type { PageTextContent } from "./keywords.js";
 import { runLighthouseAudits } from "./lighthouse.js";
 import type {
   AnalyzeOptions,
@@ -17,10 +19,11 @@ import type {
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_PAGES = 10;
-const DEFAULT_CONCURRENCY = 4;
+const DEFAULT_CONCURRENCY = 6;
 const DEFAULT_RETRIES = 2;
 const DEFAULT_LIGHTHOUSE_PAGE_COUNT = 1;
-const DEFAULT_USER_AGENT = "seo-analysis-cli/0.3";
+const DEFAULT_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0";
 const MAX_QUEUE_FACTOR = 20;
 const MAX_SITEMAP_FILES = 20;
 const MAX_REDIRECT_HOPS = 10;
@@ -127,7 +130,8 @@ function createEmptyChecks(): PageChecks {
       description: null,
       image: null
     },
-    schemaTypes: []
+    schemaTypes: [],
+    bodyText: null
   };
 }
 
@@ -311,7 +315,16 @@ async function fetchResponse(url: string, options: FetchOptions): Promise<Respon
       redirect: "manual",
       headers: {
         "user-agent": options.userAgent,
-        accept: "text/html,application/xhtml+xml,application/xml,text/plain;q=0.9,*/*;q=0.8"
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "accept-language": "en-US,en;q=0.5",
+        "accept-encoding": "gzip, deflate, br, zstd",
+        "upgrade-insecure-requests": "1",
+        "dnt": "1",
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-site": "none",
+        "sec-fetch-user": "?1",
+        "sec-gpc": "1"
       },
       signal: controller.signal
     });
@@ -1564,7 +1577,8 @@ function analyzeHtml(
       externalLinks,
       inSitemap: false,
       openGraph,
-      schemaTypes
+      schemaTypes,
+      bodyText: bodyText || null
     },
     issues,
     discoveredLinks: [...discoveredLinks]
@@ -2059,6 +2073,21 @@ function pickLighthouseUrls(pages: PageReport[], maxPages: number): string[] {
   return urls;
 }
 
+function applyKeywordMatches(page: PageReport, keywords: string[]): void {
+  if (keywords.length === 0) {
+    return;
+  }
+
+  const content: PageTextContent = {
+    title: page.checks.title ?? "",
+    metaDescription: page.checks.metaDescription ?? "",
+    h1Text: page.checks.h1s.join(" "),
+    bodyText: page.checks.bodyText ?? "",
+  };
+
+  page.keywordMatches = matchKeywordsOnPage(keywords, content);
+}
+
 export async function analyzeSite(
   startUrl: string,
   rawOptions: AnalyzeOptions = {}
@@ -2073,6 +2102,10 @@ export async function analyzeSite(
     timeoutMs: rawOptions.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     userAgent: rawOptions.userAgent ?? DEFAULT_USER_AGENT
   };
+
+  const keywords = rawOptions.keywords ?? [];
+  const extractTermsEnabled = rawOptions.extractTerms ?? false;
+  const topTermsCount = rawOptions.topTermsCount ?? 20;
 
   if (fullSitemap && sampleSitemap) {
     throw new Error("fullSitemap and sampleSitemap cannot both be enabled.");
@@ -2147,6 +2180,7 @@ export async function analyzeSite(
 
   seenFinalUrls.add(startPage.finalUrl);
   pages.push(startPage);
+  applyKeywordMatches(startPage, keywords);
 
   const infrastructureResult = await infrastructurePromise;
 
@@ -2225,6 +2259,7 @@ export async function analyzeSite(
 
       seenFinalUrls.add(page.finalUrl);
       pages.push(page);
+      applyKeywordMatches(page, keywords);
 
       if (pages.length >= maxPages || sampleSitemap) {
         continue;
@@ -2274,6 +2309,9 @@ export async function analyzeSite(
       )
     : [];
 
+  const keywordSummary = keywords.length > 0 ? buildKeywordSummary(keywords, pages) : undefined;
+  const topTerms = extractTermsEnabled ? extractTermFrequencies(pages, topTermsCount) : undefined;
+
   return {
     startUrl: normalizedStartUrl,
     infrastructure: infrastructureResult.report,
@@ -2284,6 +2322,8 @@ export async function analyzeSite(
       duplicateMetaDescriptions
     ),
     pages,
-    lighthouse
+    lighthouse,
+    keywordSummary,
+    topTerms
   };
 }
