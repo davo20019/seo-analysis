@@ -14,6 +14,7 @@ interface CliOptions {
   maxPages: number;
   outputPath: string | null;
   retries: number;
+  sampleSitemap: boolean;
   seedSitemap: boolean;
   timeoutMs: number;
   urls: string[];
@@ -28,6 +29,7 @@ Usage:
 Options:
   --max-pages <number>       Maximum pages to crawl per site. Default: 10
   --full-sitemap             Crawl every sitemap URL instead of stopping at --max-pages
+  --sample-sitemap           Sample representative sitemap URLs up to --max-pages
   --timeout-ms <number>      Request timeout in milliseconds. Default: 10000
   --concurrency <number>     Number of pages to fetch in parallel. Default: 4
   --retries <number>         Retry count for failed or retryable requests. Default: 2
@@ -44,6 +46,7 @@ Examples:
   npm run dev -- https://example.com
   npm run dev -- https://example.com --max-pages 25 --concurrency 6
   npm run dev -- https://example.com --full-sitemap --concurrency 12
+  npm run dev -- https://example.com --sample-sitemap --max-pages 25
   npm run dev -- https://example.com --include-path '^/blog' --exclude-path '/tag/'
   npm run dev -- https://example.com --lighthouse --lighthouse-pages 3
   npm run dev -- https://example.com https://example.org --json --output report.json`);
@@ -92,6 +95,7 @@ function parseArgs(argv: string[]): CliOptions {
     maxPages: 10,
     outputPath: null,
     retries: 2,
+    sampleSitemap: false,
     seedSitemap: true,
     timeoutMs: 10_000,
     urls: []
@@ -112,6 +116,11 @@ function parseArgs(argv: string[]): CliOptions {
 
     if (arg === "--full-sitemap") {
       options.fullSitemap = true;
+      continue;
+    }
+
+    if (arg === "--sample-sitemap") {
+      options.sampleSitemap = true;
       continue;
     }
 
@@ -240,6 +249,14 @@ function parseArgs(argv: string[]): CliOptions {
     throw new Error("--max-pages must be a positive integer.");
   }
 
+  if (options.fullSitemap && options.sampleSitemap) {
+    throw new Error("--sample-sitemap cannot be combined with --full-sitemap.");
+  }
+
+  if (options.sampleSitemap && !options.seedSitemap) {
+    throw new Error("--sample-sitemap cannot be combined with --no-sitemap-seed.");
+  }
+
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs < 1) {
     throw new Error("--timeout-ms must be a positive integer.");
   }
@@ -285,6 +302,14 @@ function formatInfrastructure(report: SiteReport): string[] {
     lines.push(`sitemap URLs detected: ${report.infrastructure.sitemap.urlCount}`);
   }
 
+  if (report.infrastructure.sitemap.knownUrls > 0) {
+    lines.push(
+      `known sitemap URLs collected: ${report.infrastructure.sitemap.knownUrls}${report.infrastructure.sitemap.coverageLimited ? " (partial)" : ""}`
+    );
+  }
+
+  lines.push(`llms.txt: ${report.infrastructure.llmsTxt.present ? "present" : "missing"}`);
+
   return lines;
 }
 
@@ -327,8 +352,9 @@ function formatPage(page: SiteReport["pages"][number]): string {
     page.issues.length > 0 ? page.issues.slice(0, 5).map((issue) => issue.code).join(", ") : "none";
   const lines = [
     `- ${page.finalUrl}`,
-    `  status=${page.status} redirects=${page.redirectChain.length} words=${page.checks.wordCount} h1s=${page.checks.h1s.length} internal_links=${page.checks.internalLinks} issues=${page.issues.length}`,
-    `  title=${page.checks.titleLength || 0} chars description=${page.checks.metaDescriptionLength || 0} chars html_lang=${page.checks.htmlLang ?? "missing"} expected_locale=${page.checks.expectedLocale ?? "n/a"} hreflang=${page.checks.hreflang.length}`,
+    `  status=${page.status} redirects=${page.redirectChain.length} words=${page.checks.wordCount} h1s=${page.checks.h1s.length} internal_links=${page.checks.internalLinks} incoming_internal_links=${page.checks.incomingInternalLinks} issues=${page.issues.length}`,
+    `  title=${page.checks.titleLength || 0} chars description=${page.checks.metaDescriptionLength || 0} chars html_lang=${page.checks.htmlLang ?? "missing"} expected_locale=${page.checks.expectedLocale ?? "n/a"} hreflang=${page.checks.hreflang.length} in_sitemap=${page.checks.inSitemap ? "yes" : "no"}`,
+    `  internal_anchor_empty=${page.checks.internalLinksWithoutAnchorText} internal_anchor_generic=${page.checks.internalLinksWithNonDescriptiveAnchorText}`,
     `  top_issues=${issuePreview}`
   ];
 
@@ -355,6 +381,10 @@ function formatTextReport(report: SiteReport): string {
     `Internal links checked: ${report.summary.internalLinksChecked}`,
     `Pages with broken internal links: ${report.summary.pagesWithBrokenInternalLinks}`,
     `Pages with redirecting internal links: ${report.summary.pagesWithRedirectingInternalLinks}`,
+    `Pages with anchor text issues: ${report.summary.pagesWithAnchorTextIssues}`,
+    `Pages with few incoming internal links: ${report.summary.pagesWithFewIncomingInternalLinks}`,
+    `Orphan candidates: ${report.summary.orphanCandidatePages}`,
+    `Pages missing from sitemap: ${report.summary.pagesMissingFromSitemap}`,
     `Pages with hreflang issues: ${report.summary.pagesWithHreflangIssues}`,
     `Duplicate title groups: ${report.summary.duplicateTitles.length}`,
     `Duplicate description groups: ${report.summary.duplicateMetaDescriptions.length}`,
@@ -400,6 +430,7 @@ async function main(): Promise<void> {
           lighthousePageCount: options.lighthousePages,
           maxPages: options.maxPages,
           retries: options.retries,
+          sampleSitemap: options.sampleSitemap,
           seedSitemap: options.seedSitemap,
           timeoutMs: options.timeoutMs
         })

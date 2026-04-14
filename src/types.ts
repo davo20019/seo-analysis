@@ -33,7 +33,11 @@ export interface PageChecks {
   imagesTotal: number;
   imagesMissingAlt: number;
   internalLinks: number;
+  incomingInternalLinks: number;
+  internalLinksWithoutAnchorText: number;
+  internalLinksWithNonDescriptiveAnchorText: number;
   externalLinks: number;
+  inSitemap: boolean;
   openGraph: {
     title: string | null;
     description: string | null;
@@ -66,7 +70,15 @@ export interface InfrastructureReport {
     present: boolean;
     status: number | null;
     urlCount: number;
+    knownUrls: number;
+    coverageLimited: boolean;
     isIndex: boolean;
+  };
+  llmsTxt: {
+    url: string;
+    present: boolean;
+    status: number | null;
+    isEmpty: boolean;
   };
   issues: Issue[];
 }
@@ -111,6 +123,10 @@ export interface SiteSummary {
   internalLinksChecked: number;
   pagesWithBrokenInternalLinks: number;
   pagesWithRedirectingInternalLinks: number;
+  pagesWithAnchorTextIssues: number;
+  pagesWithFewIncomingInternalLinks: number;
+  orphanCandidatePages: number;
+  pagesMissingFromSitemap: number;
   pagesWithHreflangIssues: number;
   topIssues: Array<{
     code: string;
@@ -136,6 +152,7 @@ export interface AnalyzeOptions {
   retries?: number;
   seedSitemap?: boolean;
   fullSitemap?: boolean;
+  sampleSitemap?: boolean;
   lighthouse?: boolean;
   lighthousePageCount?: number;
   includePathPatterns?: string[];

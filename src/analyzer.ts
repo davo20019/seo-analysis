@@ -29,6 +29,40 @@ const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const SUSPICIOUS_METADATA_PATTERNS = [/\[object object\]/i, /\bundefined\b/i, /\bnull\b/i];
 const LOCALE_SEGMENT_PATTERN = /^[a-z]{2}(?:-[a-z]{2})?$/i;
 const HREFLANG_PATTERN = /^(x-default|[a-z]{2,3}(?:-[a-z0-9]{2,8})*)$/i;
+const NON_DESCRIPTIVE_ANCHOR_TEXTS = new Set([
+  "article",
+  "check it out",
+  "click here",
+  "continue reading",
+  "details",
+  "discover",
+  "download",
+  "explore",
+  "find out more",
+  "go",
+  "here",
+  "learn more",
+  "link",
+  "more",
+  "more info",
+  "more information",
+  "open",
+  "page",
+  "read more",
+  "read this",
+  "see details",
+  "see more",
+  "source",
+  "start",
+  "tap here",
+  "this article",
+  "this page",
+  "view all",
+  "view details",
+  "view more",
+  "visit",
+  "website"
+]);
 const SKIP_FILE_PATTERN =
   /\.(?:avif|css|gif|ico|jpe?g|js|json|map|mp3|mp4|pdf|png|svg|txt|webm|webp|woff2?|xml|zip)$/i;
 
@@ -56,6 +90,11 @@ interface InspectInfrastructureResult {
   report: InfrastructureReport;
 }
 
+interface CollectSitemapSeedsResult {
+  coverageLimited: boolean;
+  urls: string[];
+}
+
 interface HreflangExtractionResult {
   duplicateLangs: string[];
   invalidEntries: string[];
@@ -78,7 +117,11 @@ function createEmptyChecks(): PageChecks {
     imagesTotal: 0,
     imagesMissingAlt: 0,
     internalLinks: 0,
+    incomingInternalLinks: 0,
+    internalLinksWithoutAnchorText: 0,
+    internalLinksWithNonDescriptiveAnchorText: 0,
     externalLinks: 0,
+    inSitemap: false,
     openGraph: {
       title: null,
       description: null,
@@ -189,6 +232,24 @@ function hasSuspiciousMetadataValue(value: string | null): boolean {
   return SUSPICIOUS_METADATA_PATTERNS.some((pattern) => pattern.test(value));
 }
 
+function normalizeComparableText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/&nbsp;/gi, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function isNonDescriptiveAnchorText(value: string): boolean {
+  const normalized = normalizeComparableText(value);
+
+  if (!normalized) {
+    return false;
+  }
+
+  return NON_DESCRIPTIVE_ANCHOR_TEXTS.has(normalized);
+}
+
 function isRetryableStatus(status: number): boolean {
   return RETRYABLE_STATUS_CODES.has(status);
 }
@@ -222,6 +283,23 @@ function matchesPathFilters(url: string, filters: PathFilters): boolean {
   }
 
   return true;
+}
+
+function pageHasIssue(page: PageReport, code: string): boolean {
+  return page.issues.some((issue) => issue.code === code);
+}
+
+function pageHasAnyIssue(page: PageReport, codes: string[]): boolean {
+  return page.issues.some((issue) => codes.includes(issue.code));
+}
+
+function isIndexableHtmlPage(page: PageReport): boolean {
+  return (
+    page.status >= 200 &&
+    page.status < 400 &&
+    isHtmlContentType(page.contentType) &&
+    !pageHasIssue(page, "ROBOTS_NOINDEX")
+  );
 }
 
 async function fetchResponse(url: string, options: FetchOptions): Promise<Response> {
@@ -420,16 +498,18 @@ async function collectSitemapSeeds(
   sitemapUrls: string[],
   options: FetchOptions,
   maxUrls: number
-): Promise<string[]> {
+): Promise<CollectSitemapSeedsResult> {
   const queue = [...new Set(sitemapUrls.map(normalizeUrl))];
   const visitedSitemaps = new Set<string>();
   const seedUrls = new Set<string>();
+  let coverageLimited = false;
 
-  while (
-    queue.length > 0 &&
-    visitedSitemaps.size < MAX_SITEMAP_FILES &&
-    seedUrls.size < maxUrls
-  ) {
+  while (queue.length > 0) {
+    if (visitedSitemaps.size >= MAX_SITEMAP_FILES || seedUrls.size >= maxUrls) {
+      coverageLimited = true;
+      break;
+    }
+
     const sitemapUrl = queue.shift();
 
     if (!sitemapUrl || visitedSitemaps.has(sitemapUrl)) {
@@ -469,6 +549,7 @@ async function collectSitemapSeeds(
         seedUrls.add(location);
 
         if (seedUrls.size >= maxUrls) {
+          coverageLimited = true;
           break;
         }
       }
@@ -477,18 +558,246 @@ async function collectSitemapSeeds(
     }
   }
 
-  return [...seedUrls];
+  return {
+    coverageLimited,
+    urls: [...seedUrls]
+  };
+}
+
+function compareUrls(left: string, right: string): number {
+  return left.localeCompare(right);
+}
+
+function getSitemapBucketKey(url: string): string {
+  const segments = new URL(url).pathname
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => segment.toLowerCase());
+
+  if (segments.length === 0) {
+    return "/";
+  }
+
+  const bucketSegments: string[] = [];
+  let index = 0;
+
+  if (LOCALE_SEGMENT_PATTERN.test(segments[0] ?? "")) {
+    bucketSegments.push(getPrimaryLangTag(segments[0]) ?? segments[0]);
+    index = 1;
+  }
+
+  bucketSegments.push(segments[index] ?? "(root)");
+  return bucketSegments.join("/");
+}
+
+function pickRepresentativeUrls(urls: string[], count: number): string[] {
+  const sortedUrls = [...urls].sort(compareUrls);
+
+  if (count >= sortedUrls.length) {
+    return sortedUrls;
+  }
+
+  const selected: string[] = [];
+  const usedIndexes = new Set<number>();
+
+  for (let slot = 0; slot < count; slot += 1) {
+    let index = Math.min(
+      sortedUrls.length - 1,
+      Math.floor(((slot + 0.5) * sortedUrls.length) / count)
+    );
+
+    if (usedIndexes.has(index)) {
+      for (let offset = 1; offset < sortedUrls.length; offset += 1) {
+        const forward = index + offset;
+
+        if (forward < sortedUrls.length && !usedIndexes.has(forward)) {
+          index = forward;
+          break;
+        }
+
+        const backward = index - offset;
+
+        if (backward >= 0 && !usedIndexes.has(backward)) {
+          index = backward;
+          break;
+        }
+      }
+    }
+
+    if (usedIndexes.has(index)) {
+      continue;
+    }
+
+    usedIndexes.add(index);
+    selected.push(sortedUrls[index]);
+  }
+
+  return selected;
+}
+
+function sampleSitemapSeeds(
+  seedUrls: string[],
+  sampleSize: number,
+  filters: PathFilters,
+  excludedUrls: Set<string>
+): string[] {
+  if (sampleSize < 1) {
+    return [];
+  }
+
+  const candidateUrls = [...new Set(seedUrls.map(normalizeUrl))]
+    .filter((url) => !excludedUrls.has(url))
+    .filter((url) => matchesPathFilters(url, filters));
+
+  if (candidateUrls.length <= sampleSize) {
+    return candidateUrls.sort(compareUrls);
+  }
+
+  const buckets = new Map<string, string[]>();
+
+  for (const url of candidateUrls) {
+    const bucketKey = getSitemapBucketKey(url);
+    const bucketUrls = buckets.get(bucketKey);
+
+    if (bucketUrls) {
+      bucketUrls.push(url);
+      continue;
+    }
+
+    buckets.set(bucketKey, [url]);
+  }
+
+  const bucketEntries = [...buckets.entries()]
+    .map(([key, urls]) => ({
+      key,
+      urls: urls.sort(compareUrls)
+    }))
+    .sort((left, right) => {
+      if (right.urls.length !== left.urls.length) {
+        return right.urls.length - left.urls.length;
+      }
+
+      return left.key.localeCompare(right.key);
+    });
+  const bucketEntriesByKey = new Map(bucketEntries.map((entry) => [entry.key, entry]));
+
+  const quotas = new Map<string, number>();
+
+  if (sampleSize < bucketEntries.length) {
+    for (const entry of bucketEntries.slice(0, sampleSize)) {
+      quotas.set(entry.key, 1);
+    }
+  } else {
+    let remaining = sampleSize;
+
+    for (const entry of bucketEntries) {
+      quotas.set(entry.key, 1);
+      remaining -= 1;
+    }
+
+    const totalExtraCapacity = bucketEntries.reduce(
+      (total, entry) => total + Math.max(0, entry.urls.length - 1),
+      0
+    );
+
+    if (remaining > 0 && totalExtraCapacity > 0) {
+      const rankedBuckets = bucketEntries
+        .map((entry) => {
+          const capacity = Math.max(0, entry.urls.length - 1);
+
+          if (capacity === 0) {
+            return null;
+          }
+
+          const exactShare = (remaining * capacity) / totalExtraCapacity;
+          const baseShare = Math.min(capacity, Math.floor(exactShare));
+
+          quotas.set(entry.key, (quotas.get(entry.key) ?? 0) + baseShare);
+
+          return {
+            key: entry.key,
+            remainder: exactShare - baseShare,
+            size: entry.urls.length
+          };
+        })
+        .filter((entry): entry is { key: string; remainder: number; size: number } => entry !== null)
+        .sort((left, right) => {
+          if (right.remainder !== left.remainder) {
+            return right.remainder - left.remainder;
+          }
+
+          if (right.size !== left.size) {
+            return right.size - left.size;
+          }
+
+          return left.key.localeCompare(right.key);
+        });
+
+      let allocated = 0;
+
+      for (const entry of bucketEntries) {
+        allocated += Math.max(0, (quotas.get(entry.key) ?? 0) - 1);
+      }
+
+      let leftovers = remaining - allocated;
+
+      while (leftovers > 0) {
+        let progressed = false;
+
+        for (const rankedEntry of rankedBuckets) {
+          const bucket = bucketEntriesByKey.get(rankedEntry.key);
+
+          if (!bucket) {
+            continue;
+          }
+
+          const currentQuota = quotas.get(rankedEntry.key) ?? 0;
+
+          if (currentQuota >= bucket.urls.length) {
+            continue;
+          }
+
+          quotas.set(rankedEntry.key, currentQuota + 1);
+          leftovers -= 1;
+          progressed = true;
+
+          if (leftovers === 0) {
+            break;
+          }
+        }
+
+        if (!progressed) {
+          break;
+        }
+      }
+    }
+  }
+
+  const selectedUrls: string[] = [];
+
+  for (const entry of bucketEntries) {
+    const quota = quotas.get(entry.key) ?? 0;
+
+    if (quota < 1) {
+      continue;
+    }
+
+    selectedUrls.push(...pickRepresentativeUrls(entry.urls, quota));
+  }
+
+  return selectedUrls.slice(0, sampleSize);
 }
 
 async function inspectInfrastructure(
   startUrl: string,
   options: FetchOptions,
-  seedSitemap: boolean,
+  collectSitemapUrls: boolean,
   maxSeedUrls: number
 ): Promise<InspectInfrastructureResult> {
   const origin = new URL(startUrl).origin;
   const robotsUrl = new URL("/robots.txt", origin).toString();
   const sitemapUrl = new URL("/sitemap.xml", origin).toString();
+  const llmsTxtUrl = new URL("/llms.txt", origin).toString();
   const issues: Issue[] = [];
 
   const robotsTxt = {
@@ -504,12 +813,22 @@ async function inspectInfrastructure(
     present: false,
     status: null as number | null,
     urlCount: 0,
+    knownUrls: 0,
+    coverageLimited: false,
     isIndex: false
   };
 
-  const [robotsResult, sitemapResult] = await Promise.allSettled([
+  const llmsTxt = {
+    url: llmsTxtUrl,
+    present: false,
+    status: null as number | null,
+    isEmpty: false
+  };
+
+  const [robotsResult, sitemapResult, llmsTxtResult] = await Promise.allSettled([
     fetchTextWithRetry(robotsUrl, options),
-    fetchTextWithRetry(sitemapUrl, options)
+    fetchTextWithRetry(sitemapUrl, options),
+    fetchTextWithRetry(llmsTxtUrl, options)
   ]);
 
   if (robotsResult.status === "fulfilled") {
@@ -597,11 +916,55 @@ async function inspectInfrastructure(
     );
   }
 
+  if (llmsTxtResult.status === "fulfilled") {
+    llmsTxt.status = llmsTxtResult.value.status;
+
+    if (llmsTxtResult.value.status >= 200 && llmsTxtResult.value.status < 300) {
+      llmsTxt.present = true;
+      llmsTxt.isEmpty = llmsTxtResult.value.text.trim().length === 0;
+
+      if (llmsTxt.isEmpty) {
+        pushIssue(
+          issues,
+          makeIssue(
+            "LLMSTXT_EMPTY",
+            "low",
+            "llms.txt is present but empty.",
+            "Add guidance that helps AI systems understand your canonical docs, product areas, or key content."
+          )
+        );
+      }
+    } else {
+      pushIssue(
+        issues,
+        makeIssue(
+          "LLMSTXT_MISSING",
+          "low",
+          "llms.txt is missing or returns a non-success status.",
+          "Publish llms.txt if you want to provide AI crawlers with a concise map of important content."
+        )
+      );
+    }
+  } else {
+    pushIssue(
+      issues,
+      makeIssue(
+        "LLMSTXT_UNREACHABLE",
+        "low",
+        "llms.txt could not be fetched.",
+        "Verify that the file is publicly reachable if you want to support AI crawler guidance."
+      )
+    );
+  }
+
   let crawlSeeds: string[] = [];
 
-  if (seedSitemap) {
+  if (collectSitemapUrls) {
     const sitemapTargets = [...new Set([sitemapUrl, ...robotsTxt.sitemaps])];
-    crawlSeeds = await collectSitemapSeeds(sitemapTargets, options, maxSeedUrls);
+    const sitemapSeedResult = await collectSitemapSeeds(sitemapTargets, options, maxSeedUrls);
+    crawlSeeds = sitemapSeedResult.urls;
+    sitemap.knownUrls = crawlSeeds.length;
+    sitemap.coverageLimited = sitemapSeedResult.coverageLimited;
   }
 
   return {
@@ -609,6 +972,7 @@ async function inspectInfrastructure(
     report: {
       robotsTxt,
       sitemap,
+      llmsTxt,
       issues
     }
   };
@@ -725,8 +1089,11 @@ function analyzeHtml(
   const wordCount = bodyText ? bodyText.split(" ").length : 0;
 
   let internalLinks = 0;
+  let internalLinksWithoutAnchorText = 0;
+  let internalLinksWithNonDescriptiveAnchorText = 0;
   let externalLinks = 0;
   const discoveredLinks = new Set<string>();
+  const genericInternalAnchorTexts = new Set<string>();
 
   $('a[href]').each((_, element) => {
     const rawHref = $(element).attr("href");
@@ -747,6 +1114,26 @@ function analyzeHtml(
       if (effectiveHosts.has(resolved.hostname)) {
         internalLinks += 1;
         discoveredLinks.add(normalizedHref);
+
+        const anchorText =
+          $(element).text().replace(/\s+/g, " ").trim() ||
+          $(element).attr("aria-label")?.replace(/\s+/g, " ").trim() ||
+          $(element)
+            .find("img[alt]")
+            .map((_, image) => $(image).attr("alt")?.replace(/\s+/g, " ").trim() ?? "")
+            .get()
+            .join(" ")
+            .replace(/\s+/g, " ")
+            .trim() ||
+          $(element).attr("title")?.replace(/\s+/g, " ").trim() ||
+          "";
+
+        if (!anchorText) {
+          internalLinksWithoutAnchorText += 1;
+        } else if (isNonDescriptiveAnchorText(anchorText)) {
+          internalLinksWithNonDescriptiveAnchorText += 1;
+          genericInternalAnchorTexts.add(anchorText);
+        }
       } else {
         externalLinks += 1;
       }
@@ -1126,6 +1513,30 @@ function analyzeHtml(
     );
   }
 
+  if (internalLinksWithoutAnchorText > 0) {
+    pushIssue(
+      issues,
+      makeIssue(
+        "INTERNAL_LINK_ANCHOR_EMPTY",
+        "medium",
+        `${internalLinksWithoutAnchorText} internal link(s) have no accessible anchor text.`,
+        "Add visible text, aria-labels, or meaningful image alt text so internal links provide context."
+      )
+    );
+  }
+
+  if (internalLinksWithNonDescriptiveAnchorText > 0) {
+    pushIssue(
+      issues,
+      makeIssue(
+        "INTERNAL_LINK_ANCHOR_GENERIC",
+        "low",
+        `${internalLinksWithNonDescriptiveAnchorText} internal link(s) use generic anchor text: ${summarizeValues(genericInternalAnchorTexts)}.`,
+        "Use descriptive anchor text that explains the destination instead of phrases like `read more` or `click here`."
+      )
+    );
+  }
+
   return {
     url: normalizeUrl(requestedUrl),
     finalUrl,
@@ -1147,7 +1558,11 @@ function analyzeHtml(
       imagesTotal: images.length,
       imagesMissingAlt,
       internalLinks,
+      incomingInternalLinks: 0,
+      internalLinksWithoutAnchorText,
+      internalLinksWithNonDescriptiveAnchorText,
       externalLinks,
+      inSitemap: false,
       openGraph,
       schemaTypes
     },
@@ -1462,6 +1877,109 @@ function applyHreflangCrossChecks(pages: PageReport[]): void {
   }
 }
 
+function applySitemapAndLinkArchitectureIssues(
+  pages: PageReport[],
+  startUrl: string,
+  sitemapUrls: string[],
+  sitemapCoverageLimited: boolean,
+  linkGraphCoverageLimited: boolean
+): void {
+  const normalizedStartUrl = normalizeUrl(startUrl);
+  const requestedPages = new Map(pages.map((page) => [page.url, page]));
+  const finalPages = new Map(pages.map((page) => [page.finalUrl, page]));
+  const incomingInternalLinks = new Map<string, number>();
+  const knownSitemapUrls = new Set(sitemapUrls.map(normalizeUrl));
+
+  for (const page of pages) {
+    for (const targetUrl of page.discoveredLinks) {
+      const targetPage = requestedPages.get(targetUrl) ?? finalPages.get(targetUrl);
+
+      if (!targetPage || targetPage.finalUrl === page.finalUrl) {
+        continue;
+      }
+
+      incomingInternalLinks.set(
+        targetPage.finalUrl,
+        (incomingInternalLinks.get(targetPage.finalUrl) ?? 0) + 1
+      );
+    }
+  }
+
+  for (const page of pages) {
+    const incomingCount = incomingInternalLinks.get(page.finalUrl) ?? 0;
+    const inSitemap = knownSitemapUrls.has(page.url) || knownSitemapUrls.has(page.finalUrl);
+    const isStartPage = page.finalUrl === normalizedStartUrl || page.url === normalizedStartUrl;
+    const canonicalDiffers =
+      page.checks.canonical !== null && page.checks.canonical !== page.finalUrl;
+    const selfCanonicalOrMissing =
+      page.checks.canonical === null || page.checks.canonical === page.finalUrl;
+
+    page.checks.incomingInternalLinks = incomingCount;
+    page.checks.inSitemap = inSitemap;
+
+    if (inSitemap && canonicalDiffers) {
+      pushIssue(
+        page.issues,
+        makeIssue(
+          "SITEMAP_CANONICAL_MISMATCH",
+          "medium",
+          "The page is in the sitemap but canonicals to a different URL.",
+          "Keep only canonical URLs in the sitemap so search engines are not sent conflicting signals."
+        )
+      );
+    }
+
+    if (
+      knownSitemapUrls.size > 0 &&
+      !sitemapCoverageLimited &&
+      isIndexableHtmlPage(page) &&
+      selfCanonicalOrMissing &&
+      !inSitemap
+    ) {
+      pushIssue(
+        page.issues,
+        makeIssue(
+          "SITEMAP_URL_MISSING",
+          "low",
+          "The page looks indexable but is not present in the discovered sitemap URLs.",
+          "Add the page to the sitemap if it should be crawled and indexed consistently."
+        )
+      );
+    }
+
+    if (linkGraphCoverageLimited || isStartPage || !isIndexableHtmlPage(page)) {
+      continue;
+    }
+
+    if (incomingCount === 0) {
+      pushIssue(
+        page.issues,
+        makeIssue(
+          "ORPHAN_CANDIDATE",
+          inSitemap ? "medium" : "low",
+          inSitemap
+            ? "The page appears in the sitemap but has no incoming internal links from the crawled pages."
+            : "The page has no incoming internal links from the crawled pages.",
+          "Add contextual internal links so the page can be discovered and reinforced through the site architecture."
+        )
+      );
+      continue;
+    }
+
+    if (incomingCount === 1) {
+      pushIssue(
+        page.issues,
+        makeIssue(
+          "INTERNAL_LINK_INCOMING_FEW",
+          "low",
+          "The page has only one incoming internal link from the crawled pages.",
+          "Add more relevant internal links to strengthen discovery and topical context."
+        )
+      );
+    }
+  }
+}
+
 function buildSummary(
   pages: PageReport[],
   infrastructure: InfrastructureReport,
@@ -1484,25 +2002,27 @@ function buildSummary(
   return {
     crawledPages: pages.length,
     issueTotals,
-    pagesWithNoindex: pages.filter((page) =>
-      page.issues.some((issue) => issue.code === "ROBOTS_NOINDEX")
-    ).length,
-    pagesMissingTitle: pages.filter((page) =>
-      page.issues.some((issue) => issue.code === "TITLE_MISSING")
-    ).length,
+    pagesWithNoindex: pages.filter((page) => pageHasIssue(page, "ROBOTS_NOINDEX")).length,
+    pagesMissingTitle: pages.filter((page) => pageHasIssue(page, "TITLE_MISSING")).length,
     pagesMissingDescription: pages.filter((page) =>
-      page.issues.some((issue) => issue.code === "META_DESCRIPTION_MISSING")
+      pageHasIssue(page, "META_DESCRIPTION_MISSING")
     ).length,
     internalLinksChecked: pages.reduce((total, page) => total + page.discoveredLinks.length, 0),
     pagesWithBrokenInternalLinks: pages.filter((page) =>
-      page.issues.some((issue) => issue.code === "INTERNAL_LINK_BROKEN")
+      pageHasIssue(page, "INTERNAL_LINK_BROKEN")
     ).length,
     pagesWithRedirectingInternalLinks: pages.filter((page) =>
-      page.issues.some(
-        (issue) =>
-          issue.code === "INTERNAL_LINK_REDIRECTS" || issue.code === "INTERNAL_LINK_REDIRECT_CHAIN"
-      )
+      pageHasAnyIssue(page, ["INTERNAL_LINK_REDIRECTS", "INTERNAL_LINK_REDIRECT_CHAIN"])
     ).length,
+    pagesWithAnchorTextIssues: pages.filter((page) =>
+      pageHasAnyIssue(page, ["INTERNAL_LINK_ANCHOR_EMPTY", "INTERNAL_LINK_ANCHOR_GENERIC"])
+    ).length,
+    pagesWithFewIncomingInternalLinks: pages.filter((page) =>
+      pageHasIssue(page, "INTERNAL_LINK_INCOMING_FEW")
+    ).length,
+    orphanCandidatePages: pages.filter((page) => pageHasIssue(page, "ORPHAN_CANDIDATE")).length,
+    pagesMissingFromSitemap: pages.filter((page) => pageHasIssue(page, "SITEMAP_URL_MISSING"))
+      .length,
     pagesWithHreflangIssues: pages.filter((page) =>
       page.issues.some((issue) => issue.code.startsWith("HREFLANG_"))
     ).length,
@@ -1544,14 +2064,19 @@ export async function analyzeSite(
   rawOptions: AnalyzeOptions = {}
 ): Promise<SiteReport> {
   const fullSitemap = rawOptions.fullSitemap ?? false;
+  const sampleSitemap = rawOptions.sampleSitemap ?? false;
   const maxPages = fullSitemap ? Number.POSITIVE_INFINITY : rawOptions.maxPages ?? DEFAULT_MAX_PAGES;
   const concurrency = rawOptions.concurrency ?? DEFAULT_CONCURRENCY;
-  const seedSitemap = fullSitemap ? true : rawOptions.seedSitemap ?? true;
+  const seedSitemap = fullSitemap || sampleSitemap ? true : rawOptions.seedSitemap ?? true;
   const fetchOptions: FetchOptions = {
     retries: rawOptions.retries ?? DEFAULT_RETRIES,
     timeoutMs: rawOptions.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     userAgent: rawOptions.userAgent ?? DEFAULT_USER_AGENT
   };
+
+  if (fullSitemap && sampleSitemap) {
+    throw new Error("fullSitemap and sampleSitemap cannot both be enabled.");
+  }
 
   if (!fullSitemap && (!Number.isFinite(maxPages) || maxPages < 1)) {
     throw new Error("maxPages must be a positive integer.");
@@ -1576,9 +2101,10 @@ export async function analyzeSite(
     include: compilePatterns(rawOptions.includePathPatterns, "include-path")
   };
   const normalizedStartUrl = normalizeUrl(startUrl);
-  const maxQueueSize = fullSitemap
-    ? Number.POSITIVE_INFINITY
-    : Math.max(maxPages * MAX_QUEUE_FACTOR, maxPages + concurrency);
+  const maxQueueSize =
+    fullSitemap || sampleSitemap
+      ? Number.POSITIVE_INFINITY
+      : Math.max(maxPages * MAX_QUEUE_FACTOR, maxPages + concurrency);
   const allowedHosts = new Set<string>([new URL(normalizedStartUrl).hostname]);
   const visitedRequestedUrls = new Set<string>();
   const queuedUrls = new Set<string>();
@@ -1606,8 +2132,8 @@ export async function analyzeSite(
   const infrastructurePromise = inspectInfrastructure(
     normalizedStartUrl,
     fetchOptions,
-    seedSitemap,
-    maxQueueSize
+    true,
+    fullSitemap || sampleSitemap ? Number.POSITIVE_INFINITY : maxQueueSize
   );
   const startPage = await analyzePage(normalizedStartUrl, allowedHosts, fetchOptions);
   visitedRequestedUrls.add(normalizedStartUrl);
@@ -1624,12 +2150,32 @@ export async function analyzeSite(
 
   const infrastructureResult = await infrastructurePromise;
 
-  for (const link of startPage.discoveredLinks) {
-    enqueueUrl(link);
-  }
+  if (sampleSitemap) {
+    const remainingPageBudget = Math.max(0, maxPages - pages.length);
+    const sampledUrls = sampleSitemapSeeds(
+      infrastructureResult.crawlSeeds,
+      remainingPageBudget + Math.max(concurrency, Math.ceil(remainingPageBudget * 0.25)),
+      filters,
+      new Set([normalizedStartUrl, startPage.finalUrl])
+    );
 
-  for (const sitemapSeed of infrastructureResult.crawlSeeds) {
-    enqueueUrl(sitemapSeed);
+    for (const sampledUrl of sampledUrls) {
+      enqueueUrl(sampledUrl);
+    }
+
+    if (sampledUrls.length === 0) {
+      for (const link of startPage.discoveredLinks) {
+        enqueueUrl(link);
+      }
+    }
+  } else {
+    for (const link of startPage.discoveredLinks) {
+      enqueueUrl(link);
+    }
+
+    for (const sitemapSeed of infrastructureResult.crawlSeeds) {
+      enqueueUrl(sitemapSeed);
+    }
   }
 
   while (queue.length > 0 && pages.length < maxPages) {
@@ -1680,7 +2226,7 @@ export async function analyzeSite(
       seenFinalUrls.add(page.finalUrl);
       pages.push(page);
 
-      if (pages.length >= maxPages) {
+      if (pages.length >= maxPages || sampleSitemap) {
         continue;
       }
 
@@ -1714,6 +2260,13 @@ export async function analyzeSite(
   );
   applyInternalLinkIssues(pages);
   applyHreflangCrossChecks(pages);
+  applySitemapAndLinkArchitectureIssues(
+    pages,
+    normalizedStartUrl,
+    infrastructureResult.crawlSeeds,
+    infrastructureResult.report.sitemap.coverageLimited,
+    sampleSitemap
+  );
 
   const lighthouse: LighthouseReport[] = rawOptions.lighthouse
     ? await runLighthouseAudits(
