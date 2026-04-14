@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 
 import { analyzeSite } from "./analyzer.js";
+import { scanDirectory } from "./directory-scanner.js";
 import type { DuplicateGroup, KeywordSummary, LighthouseReport, SiteReport, TermFrequency } from "./types.js";
 
 interface CliOptions {
@@ -571,25 +572,34 @@ async function main(): Promise<void> {
     const keywords = await loadKeywords(options.keywords, options.keywordFile);
     const reports: SiteReport[] = [];
 
-    for (const url of options.urls) {
-      reports.push(
-        await analyzeSite(url, {
-          concurrency: options.concurrency,
-          excludePathPatterns: options.excludePathPatterns,
-          fullSitemap: options.fullSitemap,
-          includePathPatterns: options.includePathPatterns,
-          keywords,
-          extractTerms: options.extractTerms,
-          topTermsCount: options.topTerms,
-          lighthouse: options.lighthouse,
-          lighthousePageCount: options.lighthousePages,
-          maxPages: options.maxPages,
-          retries: options.retries,
-          sampleSitemap: options.sampleSitemap,
-          seedSitemap: options.seedSitemap,
-          timeoutMs: options.timeoutMs
-        })
-      );
+    if (options.fromDirectory) {
+      const report = await scanDirectory(options.fromDirectory, {
+        keywords,
+        extractTerms: options.extractTerms,
+        topTermsCount: options.topTerms,
+      });
+      reports.push(report);
+    } else {
+      for (const url of options.urls) {
+        reports.push(
+          await analyzeSite(url, {
+            concurrency: options.concurrency,
+            excludePathPatterns: options.excludePathPatterns,
+            fullSitemap: options.fullSitemap,
+            includePathPatterns: options.includePathPatterns,
+            keywords,
+            extractTerms: options.extractTerms,
+            topTermsCount: options.topTerms,
+            lighthouse: options.lighthouse,
+            lighthousePageCount: options.lighthousePages,
+            maxPages: options.maxPages,
+            retries: options.retries,
+            sampleSitemap: options.sampleSitemap,
+            seedSitemap: options.seedSitemap,
+            timeoutMs: options.timeoutMs,
+          })
+        );
+      }
     }
 
     const output = options.json
