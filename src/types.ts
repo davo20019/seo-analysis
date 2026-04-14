@@ -46,6 +46,35 @@ export interface PageChecks {
   schemaTypes: string[];
 }
 
+export interface KeywordLocationCounts {
+  title: number;
+  h1: number;
+  metaDescription: number;
+  body: number;
+}
+
+export interface KeywordMatch {
+  keyword: string;
+  locations: KeywordLocationCounts;
+  totalOccurrences: number;
+}
+
+export interface KeywordSummary {
+  keyword: string;
+  pages: number;
+  totalOccurrences: number;
+  locations: KeywordLocationCounts;
+  urls: string[];
+}
+
+export interface TermFrequency {
+  term: string;
+  pages: number;
+  occurrences: number;
+  locations: KeywordLocationCounts;
+  urls: string[];
+}
+
 export interface PageReport {
   url: string;
   finalUrl: string;
@@ -55,6 +84,7 @@ export interface PageReport {
   checks: PageChecks;
   issues: Issue[];
   discoveredLinks: string[];
+  keywordMatches?: KeywordMatch[];
 }
 
 export interface InfrastructureReport {
@@ -142,6 +172,8 @@ export interface SiteReport {
   summary: SiteSummary;
   pages: PageReport[];
   lighthouse: LighthouseReport[];
+  keywordSummary?: KeywordSummary[];
+  topTerms?: TermFrequency[];
 }
 
 export interface AnalyzeOptions {
@@ -157,4 +189,7 @@ export interface AnalyzeOptions {
   lighthousePageCount?: number;
   includePathPatterns?: string[];
   excludePathPatterns?: string[];
+  keywords?: string[];
+  extractTerms?: boolean;
+  topTermsCount?: number;
 }
