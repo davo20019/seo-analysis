@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import type { LighthouseMetrics, LighthouseReport, LighthouseScores } from "./types.js";
 
 const LIGHTHOUSE_CATEGORIES = ["performance", "accessibility", "best-practices", "seo"];
+const LIGHTHOUSE_TIMEOUT_MS = 120_000;
 
 function createEmptyScores(): LighthouseScores {
   return {
@@ -98,6 +99,25 @@ async function runSingleLighthouseAudit(url: string): Promise<LighthouseReport> 
     const child = spawn("npx", args, {
       stdio: ["ignore", "pipe", "pipe"]
     });
+    let settled = false;
+    const finish = (report: LighthouseReport): void => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timeout);
+      resolve(report);
+    };
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      finish(
+        buildErrorReport(
+          url,
+          `Lighthouse timed out after ${Math.round(LIGHTHOUSE_TIMEOUT_MS / 1000)} seconds.`
+        )
+      );
+    }, LIGHTHOUSE_TIMEOUT_MS);
 
     let stdout = "";
     let stderr = "";
@@ -111,21 +131,21 @@ async function runSingleLighthouseAudit(url: string): Promise<LighthouseReport> 
     });
 
     child.on("error", (error) => {
-      resolve(buildErrorReport(url, error.message));
+      finish(buildErrorReport(url, error.message));
     });
 
     child.on("close", (code) => {
       if (code !== 0) {
         const details = stderr.trim() || `Lighthouse exited with status ${code}.`;
-        resolve(buildErrorReport(url, details));
+        finish(buildErrorReport(url, details));
         return;
       }
 
       try {
-        resolve(parseReport(url, stdout));
+        finish(parseReport(url, stdout));
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unable to parse Lighthouse JSON.";
-        resolve(buildErrorReport(url, message));
+        finish(buildErrorReport(url, message));
       }
     });
   });

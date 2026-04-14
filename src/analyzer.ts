@@ -1,12 +1,16 @@
 import { load } from "cheerio";
 
+import { runLighthouseAudits } from "./lighthouse.js";
 import type {
   AnalyzeOptions,
   DuplicateGroup,
+  HreflangAlternate,
   InfrastructureReport,
   Issue,
+  LighthouseReport,
   PageChecks,
   PageReport,
+  RedirectHop,
   Severity,
   SiteReport
 } from "./types.js";
@@ -15,18 +19,23 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_PAGES = 10;
 const DEFAULT_CONCURRENCY = 4;
 const DEFAULT_RETRIES = 2;
-const DEFAULT_USER_AGENT = "seo-analysis-cli/0.2";
+const DEFAULT_LIGHTHOUSE_PAGE_COUNT = 1;
+const DEFAULT_USER_AGENT = "seo-analysis-cli/0.3";
 const MAX_QUEUE_FACTOR = 20;
 const MAX_SITEMAP_FILES = 20;
+const MAX_REDIRECT_HOPS = 10;
 const RETRY_BASE_DELAY_MS = 250;
 const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const SUSPICIOUS_METADATA_PATTERNS = [/\[object object\]/i, /\bundefined\b/i, /\bnull\b/i];
+const LOCALE_SEGMENT_PATTERN = /^[a-z]{2}(?:-[a-z]{2})?$/i;
+const HREFLANG_PATTERN = /^(x-default|[a-z]{2,3}(?:-[a-z0-9]{2,8})*)$/i;
 const SKIP_FILE_PATTERN =
   /\.(?:avif|css|gif|ico|jpe?g|js|json|map|mp3|mp4|pdf|png|svg|txt|webm|webp|woff2?|xml|zip)$/i;
 
 interface FetchResult {
   contentType: string | null;
   finalUrl: string;
+  redirectChain: RedirectHop[];
   status: number;
   text: string;
 }
@@ -47,6 +56,12 @@ interface InspectInfrastructureResult {
   report: InfrastructureReport;
 }
 
+interface HreflangExtractionResult {
+  duplicateLangs: string[];
+  invalidEntries: string[];
+  links: HreflangAlternate[];
+}
+
 function createEmptyChecks(): PageChecks {
   return {
     title: null,
@@ -55,6 +70,8 @@ function createEmptyChecks(): PageChecks {
     metaDescriptionLength: 0,
     canonical: null,
     htmlLang: null,
+    expectedLocale: null,
+    hreflang: [],
     robotsMeta: null,
     h1s: [],
     wordCount: 0,
@@ -80,6 +97,59 @@ function normalizeUrl(rawUrl: string): string {
   }
 
   return parsed.toString();
+}
+
+function truncate(value: string, maxLength = 90): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
+function summarizeValues(values: Iterable<string>, maxItems = 3): string {
+  const uniqueValues = [...new Set(values)];
+
+  if (uniqueValues.length === 0) {
+    return "none";
+  }
+
+  const preview = uniqueValues.slice(0, maxItems).map((value) => truncate(value)).join(", ");
+
+  if (uniqueValues.length > maxItems) {
+    return `${preview}, +${uniqueValues.length - maxItems} more`;
+  }
+
+  return preview;
+}
+
+function normalizeLangTag(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim().replace(/_/g, "-").toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function getPrimaryLangTag(value: string | null | undefined): string | null {
+  const normalized = normalizeLangTag(value);
+
+  if (!normalized || normalized === "x-default") {
+    return null;
+  }
+
+  return normalized.split("-")[0] ?? null;
+}
+
+function inferExpectedLocale(url: string): string | null {
+  const [firstSegment] = new URL(url).pathname.split("/").filter(Boolean);
+
+  if (!firstSegment || !LOCALE_SEGMENT_PATTERN.test(firstSegment)) {
+    return null;
+  }
+
+  return getPrimaryLangTag(firstSegment);
 }
 
 function shouldSkipUrl(url: URL): boolean {
@@ -123,6 +193,11 @@ function isRetryableStatus(status: number): boolean {
   return RETRYABLE_STATUS_CODES.has(status);
 }
 
+function isHtmlContentType(contentType: string | null): boolean {
+  const normalized = contentType?.toLowerCase() ?? "";
+  return normalized.includes("text/html") || normalized.includes("application/xhtml+xml");
+}
+
 function compilePatterns(rawPatterns: string[] | undefined, label: string): RegExp[] {
   return (rawPatterns ?? []).map((pattern) => {
     try {
@@ -149,28 +224,61 @@ function matchesPathFilters(url: string, filters: PathFilters): boolean {
   return true;
 }
 
-async function fetchText(url: string, options: FetchOptions): Promise<FetchResult> {
+async function fetchResponse(url: string, options: FetchOptions): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
 
   try {
-    const response = await fetch(url, {
-      redirect: "follow",
+    return await fetch(url, {
+      redirect: "manual",
       headers: {
         "user-agent": options.userAgent,
         accept: "text/html,application/xhtml+xml,application/xml,text/plain;q=0.9,*/*;q=0.8"
       },
       signal: controller.signal
     });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchText(url: string, options: FetchOptions): Promise<FetchResult> {
+  let currentUrl = normalizeUrl(url);
+  const redirectChain: RedirectHop[] = [];
+  const visitedRedirects = new Set<string>();
+
+  while (true) {
+    if (visitedRedirects.has(currentUrl)) {
+      throw new Error(`Redirect loop detected for ${currentUrl}.`);
+    }
+
+    visitedRedirects.add(currentUrl);
+
+    const response = await fetchResponse(currentUrl, options);
+    const location = response.headers.get("location");
+
+    if (response.status >= 300 && response.status < 400 && location) {
+      if (redirectChain.length >= MAX_REDIRECT_HOPS) {
+        throw new Error(`Exceeded ${MAX_REDIRECT_HOPS} redirect hops.`);
+      }
+
+      const nextUrl = normalizeUrl(new URL(location, currentUrl).toString());
+      redirectChain.push({
+        fromUrl: currentUrl,
+        toUrl: nextUrl,
+        status: response.status
+      });
+      currentUrl = nextUrl;
+      continue;
+    }
 
     return {
       contentType: response.headers.get("content-type"),
-      finalUrl: response.url,
+      finalUrl: normalizeUrl(response.url || currentUrl),
+      redirectChain,
       status: response.status,
       text: await response.text()
     };
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -522,6 +630,45 @@ function textLength(value: string | null): number {
   return value ? value.length : 0;
 }
 
+function extractHreflangData($: ReturnType<typeof load>, baseUrl: string): HreflangExtractionResult {
+  const links: HreflangAlternate[] = [];
+  const invalidEntries: string[] = [];
+  const langCounts = new Map<string, number>();
+
+  $("link[hreflang][href]").each((_, element) => {
+    const rel = $(element).attr("rel")?.toLowerCase() ?? "";
+
+    if (!rel.split(/\s+/).includes("alternate")) {
+      return;
+    }
+
+    const rawLang = normalizeLangTag($(element).attr("hreflang"));
+    const rawHref = $(element).attr("href")?.trim();
+
+    if (!rawLang || !rawHref || !HREFLANG_PATTERN.test(rawLang)) {
+      invalidEntries.push(`${rawLang ?? "(missing)"} -> ${rawHref ?? "(missing)"}`);
+      return;
+    }
+
+    try {
+      const url = normalizeUrl(new URL(rawHref, baseUrl).toString());
+      links.push({ lang: rawLang, url });
+      langCounts.set(rawLang, (langCounts.get(rawLang) ?? 0) + 1);
+    } catch {
+      invalidEntries.push(`${rawLang} -> ${rawHref}`);
+    }
+  });
+
+  return {
+    duplicateLangs: [...langCounts.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([lang]) => lang)
+      .sort((left, right) => left.localeCompare(right)),
+    invalidEntries,
+    links
+  };
+}
+
 function analyzeHtml(
   requestedUrl: string,
   response: FetchResult,
@@ -540,6 +687,8 @@ function analyzeHtml(
     $('meta[name="description"]').attr("content")?.replace(/\s+/g, " ").trim() || null;
   const canonical = resolveCanonical($('link[rel="canonical"]').attr("href"), finalUrl);
   const htmlLang = $("html").attr("lang")?.trim() || null;
+  const expectedLocale = inferExpectedLocale(finalUrl);
+  const hreflang = extractHreflangData($, finalUrl);
   const robotsMeta = $('meta[name="robots"]').attr("content")?.trim() || null;
   const h1s = $("h1")
     .map((_, element) => $(element).text().replace(/\s+/g, " ").trim())
@@ -618,7 +767,7 @@ function analyzeHtml(
     );
   }
 
-  if (normalizeUrl(requestedUrl) !== finalUrl) {
+  if (response.redirectChain.length === 1) {
     pushIssue(
       issues,
       makeIssue(
@@ -626,6 +775,16 @@ function analyzeHtml(
         "low",
         "The requested URL redirects to a different final URL.",
         "Use the final canonical URL consistently in internal links and sitemap entries."
+      )
+    );
+  } else if (response.redirectChain.length > 1) {
+    pushIssue(
+      issues,
+      makeIssue(
+        "URL_REDIRECT_CHAIN",
+        "medium",
+        `The requested URL passes through ${response.redirectChain.length} redirects before the final page.`,
+        "Update links and sitemap entries to point directly to the final URL and remove redirect chains."
       )
     );
   }
@@ -708,6 +867,85 @@ function analyzeHtml(
         "Set the document language to improve accessibility and international SEO signals."
       )
     );
+  } else if (expectedLocale && getPrimaryLangTag(htmlLang) !== expectedLocale) {
+    pushIssue(
+      issues,
+      makeIssue(
+        "HTML_LANG_LOCALE_MISMATCH",
+        "medium",
+        `The html lang attribute "${htmlLang}" does not match the URL locale "${expectedLocale}".`,
+        "Ensure each localized route renders the correct document language."
+      )
+    );
+  }
+
+  if (hreflang.invalidEntries.length > 0) {
+    pushIssue(
+      issues,
+      makeIssue(
+        "HREFLANG_INVALID",
+        "medium",
+        `Invalid hreflang entries were detected: ${summarizeValues(hreflang.invalidEntries)}.`,
+        "Use valid hreflang codes and absolute or resolvable alternate URLs."
+      )
+    );
+  }
+
+  if (hreflang.duplicateLangs.length > 0) {
+    pushIssue(
+      issues,
+      makeIssue(
+        "HREFLANG_DUPLICATE",
+        "medium",
+        `Duplicate hreflang entries were found for: ${hreflang.duplicateLangs.join(", ")}.`,
+        "Keep one alternate link per hreflang value."
+      )
+    );
+  }
+
+  if (expectedLocale && hreflang.links.length === 0) {
+    pushIssue(
+      issues,
+      makeIssue(
+        "HREFLANG_MISSING",
+        "low",
+        "No hreflang alternate links were found on this localized page.",
+        "Add hreflang links so search engines can map equivalent localized pages."
+      )
+    );
+  }
+
+  if (hreflang.links.length > 0) {
+    const hasXDefault = hreflang.links.some((entry) => entry.lang === "x-default");
+    const hasSelfReference =
+      expectedLocale === null ||
+      hreflang.links.some(
+        (entry) => getPrimaryLangTag(entry.lang) === expectedLocale && entry.url === finalUrl
+      );
+
+    if (!hasXDefault) {
+      pushIssue(
+        issues,
+        makeIssue(
+          "HREFLANG_X_DEFAULT_MISSING",
+          "low",
+          "The page has hreflang links but no x-default entry.",
+          "Add an x-default hreflang target when the page participates in a multilingual cluster."
+        )
+      );
+    }
+
+    if (!hasSelfReference) {
+      pushIssue(
+        issues,
+        makeIssue(
+          "HREFLANG_SELF_MISSING",
+          "low",
+          "The page is missing a self-referencing hreflang link.",
+          "Include a hreflang entry for the page's own locale and final URL."
+        )
+      );
+    }
   }
 
   if (!canonical) {
@@ -893,6 +1131,7 @@ function analyzeHtml(
     finalUrl,
     status: response.status,
     contentType: response.contentType,
+    redirectChain: response.redirectChain,
     checks: {
       title,
       titleLength: textLength(title),
@@ -900,6 +1139,8 @@ function analyzeHtml(
       metaDescriptionLength: textLength(metaDescription),
       canonical,
       htmlLang,
+      expectedLocale,
+      hreflang: hreflang.links,
       robotsMeta,
       h1s,
       wordCount,
@@ -929,6 +1170,7 @@ async function analyzePage(
         finalUrl: normalizeUrl(response.finalUrl),
         status: response.status,
         contentType: response.contentType,
+        redirectChain: response.redirectChain,
         checks: createEmptyChecks(),
         issues: [
           makeIssue(
@@ -942,14 +1184,13 @@ async function analyzePage(
       };
     }
 
-    const contentType = response.contentType?.toLowerCase() ?? "";
-
-    if (!contentType.includes("text/html") && !contentType.includes("application/xhtml+xml")) {
+    if (!isHtmlContentType(response.contentType)) {
       return {
         url: normalizeUrl(url),
         finalUrl: normalizeUrl(response.finalUrl),
         status: response.status,
         contentType: response.contentType,
+        redirectChain: response.redirectChain,
         checks: createEmptyChecks(),
         issues: [
           makeIssue(
@@ -972,6 +1213,7 @@ async function analyzePage(
       finalUrl: normalizeUrl(url),
       status: 0,
       contentType: null,
+      redirectChain: [],
       checks: createEmptyChecks(),
       issues: [
         makeIssue(
@@ -1064,6 +1306,162 @@ function applyDuplicateIssues(
   }
 }
 
+function applyInternalLinkIssues(pages: PageReport[]): void {
+  const requestedPages = new Map(pages.map((page) => [page.url, page]));
+  const finalPages = new Map(pages.map((page) => [page.finalUrl, page]));
+
+  for (const page of pages) {
+    const brokenTargets = new Set<string>();
+    const redirectTargets = new Set<string>();
+    const redirectChainTargets = new Set<string>();
+
+    for (const targetUrl of page.discoveredLinks) {
+      const targetPage = requestedPages.get(targetUrl) ?? finalPages.get(targetUrl);
+
+      if (!targetPage) {
+        continue;
+      }
+
+      if (targetPage.issues.some((issue) => issue.code === "HTTP_ERROR" || issue.code === "FETCH_FAILED")) {
+        brokenTargets.add(targetUrl);
+        continue;
+      }
+
+      if (targetPage.url === targetUrl && targetPage.finalUrl !== targetUrl) {
+        const label = `${targetUrl} -> ${targetPage.finalUrl}`;
+
+        if (targetPage.redirectChain.length > 1) {
+          redirectChainTargets.add(label);
+        } else {
+          redirectTargets.add(label);
+        }
+      }
+    }
+
+    if (brokenTargets.size > 0) {
+      pushIssue(
+        page.issues,
+        makeIssue(
+          "INTERNAL_LINK_BROKEN",
+          "medium",
+          `${brokenTargets.size} internal link(s) point to broken pages: ${summarizeValues(brokenTargets)}.`,
+          "Update internal links so they point to live URLs that return a successful HTML response."
+        )
+      );
+    }
+
+    if (redirectTargets.size > 0) {
+      pushIssue(
+        page.issues,
+        makeIssue(
+          "INTERNAL_LINK_REDIRECTS",
+          "low",
+          `${redirectTargets.size} internal link(s) redirect before the final page: ${summarizeValues(redirectTargets)}.`,
+          "Update internal links to point directly to the final destination URL."
+        )
+      );
+    }
+
+    if (redirectChainTargets.size > 0) {
+      pushIssue(
+        page.issues,
+        makeIssue(
+          "INTERNAL_LINK_REDIRECT_CHAIN",
+          "medium",
+          `${redirectChainTargets.size} internal link(s) go through redirect chains: ${summarizeValues(redirectChainTargets)}.`,
+          "Replace redirect-chain links with the final destination URL to reduce crawl waste."
+        )
+      );
+    }
+  }
+}
+
+function applyHreflangCrossChecks(pages: PageReport[]): void {
+  const requestedPages = new Map(pages.map((page) => [page.url, page]));
+  const finalPages = new Map(pages.map((page) => [page.finalUrl, page]));
+
+  for (const page of pages) {
+    if (page.checks.hreflang.length === 0) {
+      continue;
+    }
+
+    const sourceLocale = page.checks.expectedLocale ?? getPrimaryLangTag(page.checks.htmlLang);
+    const missingReturnLinks = new Set<string>();
+    const targetLocaleMismatches = new Set<string>();
+    const targetRedirects = new Set<string>();
+
+    for (const alternate of page.checks.hreflang) {
+      if (alternate.lang === "x-default") {
+        continue;
+      }
+
+      const targetPage = requestedPages.get(alternate.url) ?? finalPages.get(alternate.url);
+
+      if (!targetPage) {
+        continue;
+      }
+
+      const alternateLocale = getPrimaryLangTag(alternate.lang);
+      const targetLocale = targetPage.checks.expectedLocale ?? getPrimaryLangTag(targetPage.checks.htmlLang);
+
+      if (targetPage.url === alternate.url && targetPage.finalUrl !== alternate.url) {
+        targetRedirects.add(`${alternate.lang}: ${alternate.url} -> ${targetPage.finalUrl}`);
+      }
+
+      if (alternateLocale && targetLocale && alternateLocale !== targetLocale) {
+        targetLocaleMismatches.add(`${alternate.lang}: ${targetPage.finalUrl}`);
+      }
+
+      if (sourceLocale) {
+        const hasReturnLink = targetPage.checks.hreflang.some(
+          (candidate) =>
+            getPrimaryLangTag(candidate.lang) === sourceLocale && candidate.url === page.finalUrl
+        );
+
+        if (!hasReturnLink) {
+          missingReturnLinks.add(`${alternate.lang}: ${targetPage.finalUrl}`);
+        }
+      }
+    }
+
+    if (targetRedirects.size > 0) {
+      pushIssue(
+        page.issues,
+        makeIssue(
+          "HREFLANG_TARGET_REDIRECTS",
+          "low",
+          `${targetRedirects.size} hreflang target(s) redirect: ${summarizeValues(targetRedirects)}.`,
+          "Point hreflang links directly to the final canonical alternate URLs."
+        )
+      );
+    }
+
+    if (targetLocaleMismatches.size > 0) {
+      pushIssue(
+        page.issues,
+        makeIssue(
+          "HREFLANG_TARGET_LOCALE_MISMATCH",
+          "medium",
+          `${targetLocaleMismatches.size} hreflang target(s) do not match the declared locale: ${summarizeValues(targetLocaleMismatches)}.`,
+          "Ensure each hreflang code points to a page rendered in the same locale."
+        )
+      );
+    }
+
+    if (missingReturnLinks.size > 0) {
+      pushIssue(
+        page.issues,
+        makeIssue(
+          "HREFLANG_RETURN_MISSING",
+          "low",
+          `${missingReturnLinks.size} hreflang target(s) are missing return links back to this page: ${summarizeValues(missingReturnLinks)}.`,
+          "Add reciprocal hreflang links across localized alternates."
+        )
+      );
+    }
+  }
+}
+
 function buildSummary(
   pages: PageReport[],
   infrastructure: InfrastructureReport,
@@ -1095,6 +1493,19 @@ function buildSummary(
     pagesMissingDescription: pages.filter((page) =>
       page.issues.some((issue) => issue.code === "META_DESCRIPTION_MISSING")
     ).length,
+    internalLinksChecked: pages.reduce((total, page) => total + page.discoveredLinks.length, 0),
+    pagesWithBrokenInternalLinks: pages.filter((page) =>
+      page.issues.some((issue) => issue.code === "INTERNAL_LINK_BROKEN")
+    ).length,
+    pagesWithRedirectingInternalLinks: pages.filter((page) =>
+      page.issues.some(
+        (issue) =>
+          issue.code === "INTERNAL_LINK_REDIRECTS" || issue.code === "INTERNAL_LINK_REDIRECT_CHAIN"
+      )
+    ).length,
+    pagesWithHreflangIssues: pages.filter((page) =>
+      page.issues.some((issue) => issue.code.startsWith("HREFLANG_"))
+    ).length,
     topIssues: [...issueCounts.entries()]
       .sort((left, right) => {
         if (right[1] !== left[1]) {
@@ -1110,20 +1521,39 @@ function buildSummary(
   };
 }
 
+function pickLighthouseUrls(pages: PageReport[], maxPages: number): string[] {
+  const urls: string[] = [];
+
+  for (const page of pages) {
+    if (page.status < 200 || page.status >= 400 || !isHtmlContentType(page.contentType)) {
+      continue;
+    }
+
+    urls.push(page.finalUrl);
+
+    if (urls.length >= maxPages) {
+      break;
+    }
+  }
+
+  return urls;
+}
+
 export async function analyzeSite(
   startUrl: string,
   rawOptions: AnalyzeOptions = {}
 ): Promise<SiteReport> {
-  const maxPages = rawOptions.maxPages ?? DEFAULT_MAX_PAGES;
+  const fullSitemap = rawOptions.fullSitemap ?? false;
+  const maxPages = fullSitemap ? Number.POSITIVE_INFINITY : rawOptions.maxPages ?? DEFAULT_MAX_PAGES;
   const concurrency = rawOptions.concurrency ?? DEFAULT_CONCURRENCY;
-  const seedSitemap = rawOptions.seedSitemap ?? true;
+  const seedSitemap = fullSitemap ? true : rawOptions.seedSitemap ?? true;
   const fetchOptions: FetchOptions = {
     retries: rawOptions.retries ?? DEFAULT_RETRIES,
     timeoutMs: rawOptions.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     userAgent: rawOptions.userAgent ?? DEFAULT_USER_AGENT
   };
 
-  if (!Number.isFinite(maxPages) || maxPages < 1) {
+  if (!fullSitemap && (!Number.isFinite(maxPages) || maxPages < 1)) {
     throw new Error("maxPages must be a positive integer.");
   }
 
@@ -1135,12 +1565,20 @@ export async function analyzeSite(
     throw new Error("retries must be zero or a positive integer.");
   }
 
+  if (rawOptions.lighthousePageCount !== undefined) {
+    if (!Number.isFinite(rawOptions.lighthousePageCount) || rawOptions.lighthousePageCount < 1) {
+      throw new Error("lighthousePageCount must be a positive integer.");
+    }
+  }
+
   const filters: PathFilters = {
     exclude: compilePatterns(rawOptions.excludePathPatterns, "exclude-path"),
     include: compilePatterns(rawOptions.includePathPatterns, "include-path")
   };
   const normalizedStartUrl = normalizeUrl(startUrl);
-  const maxQueueSize = Math.max(maxPages * MAX_QUEUE_FACTOR, maxPages + concurrency);
+  const maxQueueSize = fullSitemap
+    ? Number.POSITIVE_INFINITY
+    : Math.max(maxPages * MAX_QUEUE_FACTOR, maxPages + concurrency);
   const allowedHosts = new Set<string>([new URL(normalizedStartUrl).hostname]);
   const visitedRequestedUrls = new Set<string>();
   const queuedUrls = new Set<string>();
@@ -1274,6 +1712,14 @@ export async function analyzeSite(
     "meta description",
     "Rewrite duplicated descriptions so each page has a unique search snippet."
   );
+  applyInternalLinkIssues(pages);
+  applyHreflangCrossChecks(pages);
+
+  const lighthouse: LighthouseReport[] = rawOptions.lighthouse
+    ? await runLighthouseAudits(
+        pickLighthouseUrls(pages, rawOptions.lighthousePageCount ?? DEFAULT_LIGHTHOUSE_PAGE_COUNT)
+      )
+    : [];
 
   return {
     startUrl: normalizedStartUrl,
@@ -1284,6 +1730,7 @@ export async function analyzeSite(
       duplicateTitles,
       duplicateMetaDescriptions
     ),
-    pages
+    pages,
+    lighthouse
   };
 }

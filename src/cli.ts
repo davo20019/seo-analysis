@@ -1,13 +1,16 @@
 import { writeFile } from "node:fs/promises";
 
 import { analyzeSite } from "./analyzer.js";
-import type { DuplicateGroup, SiteReport } from "./types.js";
+import type { DuplicateGroup, LighthouseReport, SiteReport } from "./types.js";
 
 interface CliOptions {
   concurrency: number;
   excludePathPatterns: string[];
+  fullSitemap: boolean;
   includePathPatterns: string[];
   json: boolean;
+  lighthouse: boolean;
+  lighthousePages: number;
   maxPages: number;
   outputPath: string | null;
   retries: number;
@@ -23,21 +26,26 @@ Usage:
   npm run dev -- <url> [more-urls] [options]
 
 Options:
-  --max-pages <number>     Maximum pages to crawl per site. Default: 10
-  --timeout-ms <number>    Request timeout in milliseconds. Default: 10000
-  --concurrency <number>   Number of pages to fetch in parallel. Default: 4
-  --retries <number>       Retry count for failed or retryable requests. Default: 2
-  --include-path <regex>   Only crawl discovered URLs whose path matches the regex
-  --exclude-path <regex>   Skip discovered URLs whose path matches the regex
-  --no-sitemap-seed        Do not seed the crawl queue from sitemap URLs
-  --json                   Print raw JSON instead of a text report
-  --output <file>          Write the final report to a file
-  --help                   Show this help
+  --max-pages <number>       Maximum pages to crawl per site. Default: 10
+  --full-sitemap             Crawl every sitemap URL instead of stopping at --max-pages
+  --timeout-ms <number>      Request timeout in milliseconds. Default: 10000
+  --concurrency <number>     Number of pages to fetch in parallel. Default: 4
+  --retries <number>         Retry count for failed or retryable requests. Default: 2
+  --include-path <regex>     Only crawl discovered URLs whose path matches the regex
+  --exclude-path <regex>     Skip discovered URLs whose path matches the regex
+  --no-sitemap-seed          Do not seed the crawl queue from sitemap URLs
+  --lighthouse               Run optional Lighthouse audits on a small set of crawled pages
+  --lighthouse-pages <n>     Number of crawled pages to send through Lighthouse. Default: 1
+  --json                     Print raw JSON instead of a text report
+  --output <file>            Write the final report to a file
+  --help                     Show this help
 
 Examples:
   npm run dev -- https://example.com
   npm run dev -- https://example.com --max-pages 25 --concurrency 6
+  npm run dev -- https://example.com --full-sitemap --concurrency 12
   npm run dev -- https://example.com --include-path '^/blog' --exclude-path '/tag/'
+  npm run dev -- https://example.com --lighthouse --lighthouse-pages 3
   npm run dev -- https://example.com https://example.org --json --output report.json`);
 }
 
@@ -76,8 +84,11 @@ function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
     concurrency: 4,
     excludePathPatterns: [],
+    fullSitemap: false,
     includePathPatterns: [],
     json: false,
+    lighthouse: false,
+    lighthousePages: 1,
     maxPages: 10,
     outputPath: null,
     retries: 2,
@@ -99,8 +110,18 @@ function parseArgs(argv: string[]): CliOptions {
       continue;
     }
 
+    if (arg === "--full-sitemap") {
+      options.fullSitemap = true;
+      continue;
+    }
+
     if (arg === "--no-sitemap-seed") {
       options.seedSitemap = false;
+      continue;
+    }
+
+    if (arg === "--lighthouse") {
+      options.lighthouse = true;
       continue;
     }
 
@@ -176,6 +197,23 @@ function parseArgs(argv: string[]): CliOptions {
       continue;
     }
 
+    if (arg === "--lighthouse-pages") {
+      options.lighthousePages = parseNumberValue(
+        requireValue(argv, index, "--lighthouse-pages"),
+        "--lighthouse-pages"
+      );
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--lighthouse-pages=")) {
+      options.lighthousePages = parseNumberValue(
+        arg.split("=")[1] ?? "",
+        "--lighthouse-pages"
+      );
+      continue;
+    }
+
     if (arg === "--output") {
       options.outputPath = requireValue(argv, index, "--output");
       index += 1;
@@ -198,7 +236,7 @@ function parseArgs(argv: string[]): CliOptions {
     throw new Error("Provide at least one website URL to analyze.");
   }
 
-  if (!Number.isFinite(options.maxPages) || options.maxPages < 1) {
+  if (!options.fullSitemap && (!Number.isFinite(options.maxPages) || options.maxPages < 1)) {
     throw new Error("--max-pages must be a positive integer.");
   }
 
@@ -212,6 +250,10 @@ function parseArgs(argv: string[]): CliOptions {
 
   if (!Number.isFinite(options.retries) || options.retries < 0) {
     throw new Error("--retries must be zero or a positive integer.");
+  }
+
+  if (!Number.isFinite(options.lighthousePages) || options.lighthousePages < 1) {
+    throw new Error("--lighthouse-pages must be a positive integer.");
   }
 
   validatePatterns(options.includePathPatterns, "--include-path");
@@ -258,13 +300,35 @@ function formatDuplicateGroups(label: string, groups: DuplicateGroup[]): string[
   ];
 }
 
+function formatLighthouseReport(lighthouse: LighthouseReport[]): string[] {
+  if (lighthouse.length === 0) {
+    return [];
+  }
+
+  return [
+    "",
+    "Lighthouse:",
+    ...lighthouse.map((entry) => {
+      if (entry.error) {
+        return `- ${entry.requestedUrl}: error=${truncate(entry.error, 140)}`;
+      }
+
+      return [
+        `- ${entry.finalUrl}`,
+        `  performance=${entry.scores.performance ?? "n/a"} accessibility=${entry.scores.accessibility ?? "n/a"} best_practices=${entry.scores.bestPractices ?? "n/a"} seo=${entry.scores.seo ?? "n/a"}`,
+        `  lcp_ms=${entry.metrics.largestContentfulPaintMs ?? "n/a"} cls=${entry.metrics.cumulativeLayoutShift ?? "n/a"} tbt_ms=${entry.metrics.totalBlockingTimeMs ?? "n/a"}`
+      ].join("\n");
+    })
+  ];
+}
+
 function formatPage(page: SiteReport["pages"][number]): string {
   const issuePreview =
-    page.issues.length > 0 ? page.issues.slice(0, 4).map((issue) => issue.code).join(", ") : "none";
+    page.issues.length > 0 ? page.issues.slice(0, 5).map((issue) => issue.code).join(", ") : "none";
   const lines = [
     `- ${page.finalUrl}`,
-    `  status=${page.status} words=${page.checks.wordCount} h1s=${page.checks.h1s.length} internal_links=${page.checks.internalLinks} issues=${page.issues.length}`,
-    `  title=${page.checks.titleLength || 0} chars description=${page.checks.metaDescriptionLength || 0} chars images_missing_alt=${page.checks.imagesMissingAlt}`,
+    `  status=${page.status} redirects=${page.redirectChain.length} words=${page.checks.wordCount} h1s=${page.checks.h1s.length} internal_links=${page.checks.internalLinks} issues=${page.issues.length}`,
+    `  title=${page.checks.titleLength || 0} chars description=${page.checks.metaDescriptionLength || 0} chars html_lang=${page.checks.htmlLang ?? "missing"} expected_locale=${page.checks.expectedLocale ?? "n/a"} hreflang=${page.checks.hreflang.length}`,
     `  top_issues=${issuePreview}`
   ];
 
@@ -288,12 +352,17 @@ function formatTextReport(report: SiteReport): string {
     `Pages with noindex: ${report.summary.pagesWithNoindex}`,
     `Pages missing title: ${report.summary.pagesMissingTitle}`,
     `Pages missing description: ${report.summary.pagesMissingDescription}`,
+    `Internal links checked: ${report.summary.internalLinksChecked}`,
+    `Pages with broken internal links: ${report.summary.pagesWithBrokenInternalLinks}`,
+    `Pages with redirecting internal links: ${report.summary.pagesWithRedirectingInternalLinks}`,
+    `Pages with hreflang issues: ${report.summary.pagesWithHreflangIssues}`,
     `Duplicate title groups: ${report.summary.duplicateTitles.length}`,
     `Duplicate description groups: ${report.summary.duplicateMetaDescriptions.length}`,
     `Top issues: ${topIssues}`,
     ...formatInfrastructure(report),
     ...formatDuplicateGroups("Duplicate Titles", report.summary.duplicateTitles),
     ...formatDuplicateGroups("Duplicate Descriptions", report.summary.duplicateMetaDescriptions),
+    ...formatLighthouseReport(report.lighthouse),
     "",
     "Pages:",
     ...report.pages.map(formatPage)
@@ -325,7 +394,10 @@ async function main(): Promise<void> {
         await analyzeSite(url, {
           concurrency: options.concurrency,
           excludePathPatterns: options.excludePathPatterns,
+          fullSitemap: options.fullSitemap,
           includePathPatterns: options.includePathPatterns,
+          lighthouse: options.lighthouse,
+          lighthousePageCount: options.lighthousePages,
           maxPages: options.maxPages,
           retries: options.retries,
           seedSitemap: options.seedSitemap,
