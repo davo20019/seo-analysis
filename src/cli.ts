@@ -1,7 +1,7 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 
 import { analyzeSite } from "./analyzer.js";
-import type { DuplicateGroup, LighthouseReport, SiteReport } from "./types.js";
+import type { DuplicateGroup, KeywordSummary, LighthouseReport, SiteReport, TermFrequency } from "./types.js";
 
 interface CliOptions {
   concurrency: number;
@@ -13,6 +13,11 @@ interface CliOptions {
   lighthousePages: number;
   maxPages: number;
   outputPath: string | null;
+  keywords: string[];
+  keywordFile: string | null;
+  extractTerms: boolean;
+  topTerms: number;
+  fromDirectory: string | null;
   retries: number;
   sampleSitemap: boolean;
   seedSitemap: boolean;
@@ -38,6 +43,11 @@ Options:
   --no-sitemap-seed          Do not seed the crawl queue from sitemap URLs
   --lighthouse               Run optional Lighthouse audits on a small set of crawled pages
   --lighthouse-pages <n>     Number of crawled pages to send through Lighthouse. Default: 1
+  --keyword <term>          Search for this keyword in crawled pages (repeatable)
+  --keyword-file <path>     Read keywords from a file, one per line
+  --extract-terms           Extract and rank the most frequent terms on the site
+  --top-terms <n>           Number of top terms to report. Default: 20
+  --from-directory <path>   Search local HTML files instead of crawling
   --json                     Print raw JSON instead of a text report
   --output <file>            Write the final report to a file
   --help                     Show this help
@@ -49,7 +59,10 @@ Examples:
   npm run dev -- https://example.com --sample-sitemap --max-pages 25
   npm run dev -- https://example.com --include-path '^/blog' --exclude-path '/tag/'
   npm run dev -- https://example.com --lighthouse --lighthouse-pages 3
-  npm run dev -- https://example.com https://example.org --json --output report.json`);
+  npm run dev -- https://example.com https://example.org --json --output report.json
+  npm run dev -- https://example.com --keyword "seo" --keyword "site audit"
+  npm run dev -- https://example.com --keyword-file keywords.txt --extract-terms
+  npm run dev -- --from-directory ./site_backup --keyword-file keywords.txt`);
 }
 
 function requireValue(args: string[], index: number, flag: string): string {
@@ -94,6 +107,11 @@ function parseArgs(argv: string[]): CliOptions {
     lighthousePages: 1,
     maxPages: 10,
     outputPath: null,
+    keywords: [],
+    keywordFile: null,
+    extractTerms: false,
+    topTerms: 20,
+    fromDirectory: null,
     retries: 2,
     sampleSitemap: false,
     seedSitemap: true,
@@ -234,6 +252,55 @@ function parseArgs(argv: string[]): CliOptions {
       continue;
     }
 
+    if (arg === "--keyword") {
+      options.keywords.push(requireValue(argv, index, "--keyword"));
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--keyword=")) {
+      options.keywords.push(arg.split("=").slice(1).join("="));
+      continue;
+    }
+
+    if (arg === "--keyword-file") {
+      options.keywordFile = requireValue(argv, index, "--keyword-file");
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--keyword-file=")) {
+      options.keywordFile = arg.split("=").slice(1).join("=");
+      continue;
+    }
+
+    if (arg === "--extract-terms") {
+      options.extractTerms = true;
+      continue;
+    }
+
+    if (arg === "--top-terms") {
+      options.topTerms = parseNumberValue(requireValue(argv, index, "--top-terms"), "--top-terms");
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--top-terms=")) {
+      options.topTerms = parseNumberValue(arg.split("=")[1] ?? "", "--top-terms");
+      continue;
+    }
+
+    if (arg === "--from-directory") {
+      options.fromDirectory = requireValue(argv, index, "--from-directory");
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--from-directory=")) {
+      options.fromDirectory = arg.split("=").slice(1).join("=");
+      continue;
+    }
+
     if (arg.startsWith("--")) {
       throw new Error(`Unknown option: ${arg}`);
     }
@@ -241,8 +308,18 @@ function parseArgs(argv: string[]): CliOptions {
     options.urls.push(arg);
   }
 
-  if (options.urls.length === 0) {
+  if (options.fromDirectory) {
+    if (options.keywords.length === 0 && !options.keywordFile && !options.extractTerms) {
+      throw new Error(
+        "Use --from-directory with --keyword, --keyword-file, or --extract-terms."
+      );
+    }
+  } else if (options.urls.length === 0) {
     throw new Error("Provide at least one website URL to analyze.");
+  }
+
+  if (!Number.isFinite(options.topTerms) || options.topTerms < 1) {
+    throw new Error("--top-terms must be a positive integer.");
   }
 
   if (!options.fullSitemap && (!Number.isFinite(options.maxPages) || options.maxPages < 1)) {
@@ -277,6 +354,24 @@ function parseArgs(argv: string[]): CliOptions {
   validatePatterns(options.excludePathPatterns, "--exclude-path");
 
   return options;
+}
+
+async function loadKeywords(
+  cliKeywords: string[],
+  keywordFilePath: string | null
+): Promise<string[]> {
+  const keywords = [...cliKeywords];
+
+  if (keywordFilePath) {
+    const content = await readFile(keywordFilePath, "utf8");
+    const fileKeywords = content
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith("#"));
+    keywords.push(...fileKeywords);
+  }
+
+  return [...new Set(keywords)];
 }
 
 function truncate(value: string, maxLength: number): string {
@@ -347,6 +442,54 @@ function formatLighthouseReport(lighthouse: LighthouseReport[]): string[] {
   ];
 }
 
+function formatKeywordSummary(summary: KeywordSummary[]): string[] {
+  if (summary.length === 0) {
+    return [];
+  }
+
+  const lines = ["", "Keyword Search Results:"];
+
+  for (const entry of summary) {
+    const locations: string[] = [];
+
+    if (entry.locations.title > 0) locations.push(`title(${entry.locations.title})`);
+    if (entry.locations.h1 > 0) locations.push(`h1(${entry.locations.h1})`);
+    if (entry.locations.metaDescription > 0) locations.push(`meta(${entry.locations.metaDescription})`);
+    if (entry.locations.body > 0) locations.push(`body(${entry.locations.body})`);
+
+    const foundIn = locations.length > 0 ? locations.join(" ") : "\u2014";
+    lines.push(
+      `  "${truncate(entry.keyword, 30)}"  pages=${entry.pages}  occurrences=${entry.totalOccurrences}  found_in=${foundIn}`
+    );
+  }
+
+  return lines;
+}
+
+function formatTopTerms(terms: TermFrequency[]): string[] {
+  if (terms.length === 0) {
+    return [];
+  }
+
+  const lines = ["", "Top Site Terms:"];
+
+  for (let i = 0; i < terms.length; i += 1) {
+    const entry = terms[i];
+    const locations: string[] = [];
+
+    if (entry.locations.title > 0) locations.push(`title(${entry.locations.title})`);
+    if (entry.locations.h1 > 0) locations.push(`h1(${entry.locations.h1})`);
+    if (entry.locations.metaDescription > 0) locations.push(`meta(${entry.locations.metaDescription})`);
+    if (entry.locations.body > 0) locations.push(`body(${entry.locations.body})`);
+
+    lines.push(
+      `  ${i + 1}. "${entry.term}"  pages=${entry.pages}  occurrences=${entry.occurrences}  ${locations.join(" ")}`
+    );
+  }
+
+  return lines;
+}
+
 function formatPage(page: SiteReport["pages"][number]): string {
   const issuePreview =
     page.issues.length > 0 ? page.issues.slice(0, 5).map((issue) => issue.code).join(", ") : "none";
@@ -403,6 +546,14 @@ function formatTextReport(report: SiteReport): string {
     lines.push(...report.infrastructure.issues.map((issue) => `- ${issue.code}: ${issue.message}`));
   }
 
+  if (report.keywordSummary) {
+    lines.push(...formatKeywordSummary(report.keywordSummary));
+  }
+
+  if (report.topTerms) {
+    lines.push(...formatTopTerms(report.topTerms));
+  }
+
   return lines.join("\n");
 }
 
@@ -417,6 +568,7 @@ async function maybeWriteOutput(outputPath: string | null, contents: string): Pr
 async function main(): Promise<void> {
   try {
     const options = parseArgs(process.argv.slice(2));
+    const keywords = await loadKeywords(options.keywords, options.keywordFile);
     const reports: SiteReport[] = [];
 
     for (const url of options.urls) {
@@ -426,6 +578,9 @@ async function main(): Promise<void> {
           excludePathPatterns: options.excludePathPatterns,
           fullSitemap: options.fullSitemap,
           includePathPatterns: options.includePathPatterns,
+          keywords,
+          extractTerms: options.extractTerms,
+          topTermsCount: options.topTerms,
           lighthouse: options.lighthouse,
           lighthousePageCount: options.lighthousePages,
           maxPages: options.maxPages,
