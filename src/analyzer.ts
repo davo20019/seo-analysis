@@ -317,7 +317,7 @@ async function fetchResponse(url: string, options: FetchOptions): Promise<Respon
         "user-agent": options.userAgent,
         "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "accept-language": "en-US,en;q=0.5",
-        "accept-encoding": "gzip, deflate, br, zstd",
+        "accept-encoding": "gzip, deflate, br",
         "upgrade-insecure-requests": "1",
         "dnt": "1",
         "sec-fetch-dest": "document",
