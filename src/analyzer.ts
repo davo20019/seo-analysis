@@ -72,6 +72,7 @@ const SKIP_FILE_PATTERN =
 interface FetchResult {
   contentType: string | null;
   finalUrl: string;
+  headers: Record<string, string>;
   redirectChain: RedirectHop[];
   status: number;
   text: string;
@@ -333,6 +334,14 @@ async function fetchResponse(url: string, options: FetchOptions): Promise<Respon
   }
 }
 
+export function extractHeaderMap(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    out[key.toLowerCase()] = value;
+  });
+  return out;
+}
+
 async function fetchText(url: string, options: FetchOptions): Promise<FetchResult> {
   let currentUrl = normalizeUrl(url);
   const redirectChain: RedirectHop[] = [];
@@ -366,6 +375,7 @@ async function fetchText(url: string, options: FetchOptions): Promise<FetchResul
     return {
       contentType: response.headers.get("content-type"),
       finalUrl: normalizeUrl(response.url || currentUrl),
+      headers: extractHeaderMap(response.headers),
       redirectChain,
       status: response.status,
       text: await response.text()
