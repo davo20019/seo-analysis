@@ -19,6 +19,8 @@ interface CliOptions {
   extractTerms: boolean;
   topTerms: number;
   fromDirectory: string | null;
+  render: boolean;
+  renderTimeoutMs: number | null;
   retries: number;
   sampleSitemap: boolean;
   seedSitemap: boolean;
@@ -45,6 +47,8 @@ Options:
   --no-sitemap-seed          Do not seed the crawl queue from sitemap URLs
   --lighthouse               Run optional Lighthouse audits on a small set of crawled pages
   --lighthouse-pages <n>     Number of crawled pages to send through Lighthouse. Default: 1
+  --render                   Render pages with headless Chromium (Playwright) instead of raw fetch — needed for SPAs and JS-challenge sites
+  --render-timeout-ms <n>    Timeout per page render in milliseconds (default: 30000)
   --keyword <term>          Search for this keyword in crawled pages (repeatable)
   --keyword-file <path>     Read keywords from a file, one per line
   --extract-terms           Extract and rank the most frequent terms on the site
@@ -115,6 +119,8 @@ function parseArgs(argv: string[]): CliOptions {
     extractTerms: false,
     topTerms: 20,
     fromDirectory: null,
+    render: false,
+    renderTimeoutMs: null,
     retries: 2,
     sampleSitemap: false,
     seedSitemap: true,
@@ -241,6 +247,28 @@ function parseArgs(argv: string[]): CliOptions {
       options.lighthousePages = parseNumberValue(
         arg.split("=")[1] ?? "",
         "--lighthouse-pages"
+      );
+      continue;
+    }
+
+    if (arg === "--render") {
+      options.render = true;
+      continue;
+    }
+
+    if (arg === "--render-timeout-ms") {
+      options.renderTimeoutMs = parseNumberValue(
+        requireValue(argv, index, "--render-timeout-ms"),
+        "--render-timeout-ms"
+      );
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--render-timeout-ms=")) {
+      options.renderTimeoutMs = parseNumberValue(
+        arg.split("=")[1] ?? "",
+        "--render-timeout-ms"
       );
       continue;
     }
@@ -607,6 +635,8 @@ async function main(): Promise<void> {
             lighthouse: options.lighthouse,
             lighthousePageCount: options.lighthousePages,
             maxPages: options.maxPages,
+            render: options.render,
+            ...(options.renderTimeoutMs ? { renderTimeoutMs: options.renderTimeoutMs } : {}),
             retries: options.retries,
             sampleSitemap: options.sampleSitemap,
             seedSitemap: options.seedSitemap,
