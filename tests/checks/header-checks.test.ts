@@ -32,3 +32,41 @@ describe("checkXRobotsTag", () => {
     expect(checkXRobotsTag({})).toEqual([]);
   });
 });
+
+import { checkResponseHeaders } from "../../src/checks/header-checks.js";
+
+describe("checkResponseHeaders", () => {
+  it("flags missing HSTS on HTTPS", () => {
+    const issues = checkResponseHeaders("https://example.com/", { "content-type": "text/html" });
+    const codes = issues.map((i) => i.code);
+    expect(codes).toContain("HEADER_HSTS_MISSING");
+  });
+
+  it("does not flag HSTS on HTTP", () => {
+    const issues = checkResponseHeaders("http://example.com/", { "content-type": "text/html" });
+    expect(issues.map((i) => i.code)).not.toContain("HEADER_HSTS_MISSING");
+  });
+
+  it("flags missing content-type", () => {
+    const issues = checkResponseHeaders("https://example.com/", { "strict-transport-security": "max-age=31536000" });
+    expect(issues.map((i) => i.code)).toContain("HEADER_CONTENT_TYPE_MISSING");
+  });
+
+  it("flags no-cache for HTML but allows aggressive caching", () => {
+    const issues = checkResponseHeaders("https://example.com/", {
+      "content-type": "text/html",
+      "cache-control": "no-store, no-cache, must-revalidate, max-age=0",
+      "strict-transport-security": "max-age=31536000",
+    });
+    expect(issues.map((i) => i.code)).toContain("HEADER_CACHE_CONTROL_AGGRESSIVE_NOCACHE");
+  });
+
+  it("returns empty when all headers are healthy", () => {
+    const issues = checkResponseHeaders("https://example.com/", {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "public, max-age=3600",
+      "strict-transport-security": "max-age=31536000; includeSubDomains",
+    });
+    expect(issues).toEqual([]);
+  });
+});
