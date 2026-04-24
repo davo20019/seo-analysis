@@ -24,6 +24,7 @@ interface CliOptions {
   seedSitemap: boolean;
   timeoutMs: number;
   urls: string[];
+  userAgent: string | null;
 }
 
 function printHelp(): void {
@@ -51,6 +52,7 @@ Options:
   --from-directory <path>   Search local HTML files instead of crawling
   --json                     Print raw JSON instead of a text report
   --output <file>            Write the final report to a file
+  --user-agent <string>      Override the HTTP User-Agent sent by the crawler
   --help                     Show this help
 
 Examples:
@@ -117,7 +119,8 @@ function parseArgs(argv: string[]): CliOptions {
     sampleSitemap: false,
     seedSitemap: true,
     timeoutMs: 10_000,
-    urls: []
+    urls: [],
+    userAgent: null
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -250,6 +253,17 @@ function parseArgs(argv: string[]): CliOptions {
 
     if (arg.startsWith("--output=")) {
       options.outputPath = arg.split("=")[1] ?? null;
+      continue;
+    }
+
+    if (arg === "--user-agent") {
+      options.userAgent = requireValue(argv, index, "--user-agent");
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--user-agent=")) {
+      options.userAgent = arg.split("=").slice(1).join("=");
       continue;
     }
 
@@ -597,6 +611,7 @@ async function main(): Promise<void> {
             sampleSitemap: options.sampleSitemap,
             seedSitemap: options.seedSitemap,
             timeoutMs: options.timeoutMs,
+            ...(options.userAgent ? { userAgent: options.userAgent } : {}),
           })
         );
       }
