@@ -1,4 +1,4 @@
-import type { BrowserContext, Response as PlaywrightResponse } from "playwright";
+import { chromium, type BrowserContext, type Browser, type Response as PlaywrightResponse } from "playwright";
 import type { FetchResult } from "./analyzer.js";
 
 export interface RenderOptions {
@@ -49,4 +49,14 @@ function normalizeHeaders(raw: Record<string, string>): Record<string, string> {
     out[k.toLowerCase()] = v;
   }
   return out;
+}
+
+export interface BrowserLaunchOptions {
+  headless?: boolean;
+}
+
+export async function launchRenderBrowser(
+  options: BrowserLaunchOptions = {},
+): Promise<Browser> {
+  return chromium.launch({ headless: options.headless ?? true });
 }
