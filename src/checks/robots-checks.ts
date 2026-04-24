@@ -1,3 +1,5 @@
+import type { Issue } from "../types.js";
+
 export type RobotsRule = { type: "allow" | "disallow"; path: string };
 export type RobotsRules = Record<string, RobotsRule[]>;
 
@@ -52,4 +54,19 @@ export function isUrlAllowed(
   }
   if (!bestMatch) return true;
   return bestMatch.rule.type === "allow";
+}
+
+export function checkUrlAgainstRobots(
+  url: string,
+  userAgent: string,
+  rules: RobotsRules,
+): Issue[] {
+  if (Object.keys(rules).length === 0) return [];
+  if (isUrlAllowed(url, userAgent, rules)) return [];
+  return [{
+    code: "ROBOTS_DISALLOWS_URL",
+    severity: "high",
+    message: `robots.txt disallows this URL for user-agent "${userAgent}" — it will not be crawled by compliant bots.`,
+    recommendation: "If the page should be indexed, update robots.txt to allow this path.",
+  }];
 }

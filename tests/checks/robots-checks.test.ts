@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseRobotsRules, isUrlAllowed } from "../../src/checks/robots-checks.js";
+import { parseRobotsRules, isUrlAllowed, checkUrlAgainstRobots } from "../../src/checks/robots-checks.js";
 
 describe("parseRobotsRules", () => {
   it("groups rules by user-agent", () => {
@@ -60,5 +60,24 @@ describe("isUrlAllowed", () => {
 
   it("is case-insensitive on user-agent", () => {
     expect(isUrlAllowed("https://site.com/secret/x", "GoogleBot", rules)).toBe(false);
+  });
+});
+
+describe("checkUrlAgainstRobots", () => {
+  const rules = { "*": [{ type: "disallow" as const, path: "/admin/" }] };
+
+  it("flags a disallowed URL", () => {
+    const issues = checkUrlAgainstRobots("https://site.com/admin/x", "googlebot", rules);
+    expect(issues).toHaveLength(1);
+    expect(issues[0].code).toBe("ROBOTS_DISALLOWS_URL");
+    expect(issues[0].severity).toBe("high");
+  });
+
+  it("does not flag an allowed URL", () => {
+    expect(checkUrlAgainstRobots("https://site.com/about", "googlebot", rules)).toEqual([]);
+  });
+
+  it("returns empty when there are no rules at all", () => {
+    expect(checkUrlAgainstRobots("https://site.com/x", "googlebot", {})).toEqual([]);
   });
 });
