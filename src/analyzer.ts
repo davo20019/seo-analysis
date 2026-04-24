@@ -81,7 +81,7 @@ const NON_DESCRIPTIVE_ANCHOR_TEXTS = new Set([
 const SKIP_FILE_PATTERN =
   /\.(?:avif|css|gif|ico|jpe?g|js|json|map|mp3|mp4|pdf|png|svg|txt|webm|webp|woff2?|xml|zip)$/i;
 
-interface FetchResult {
+export interface FetchResult {
   contentType: string | null;
   finalUrl: string;
   headers: Record<string, string>;
