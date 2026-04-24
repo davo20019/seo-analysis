@@ -82,6 +82,18 @@ npm run dev -- https://example.com --exclude-path '/tag/' --exclude-path '/page/
 npm run dev -- https://example.com --lighthouse --lighthouse-pages 3
 ```
 
+```bash
+# Render pages with headless Chromium (Playwright) — needed for SPAs,
+# JS-challenge sites (Cloudflare turnstile), and pages whose final DOM
+# depends on JS. Slower and heavier than the default static fetch.
+npm run dev -- https://example.com --render --max-pages 5
+```
+
+Notes on `--render`:
+- First `npm install` auto-downloads Chromium (~300MB). To skip (e.g. CI), set `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` and run `npx playwright install chromium` later.
+- Rendering is slower than raw fetch (typical: 2–10s per page). Use `--max-pages` to scope.
+- Known limitation: `redirectChain` is not captured for rendered pages in v1. The `finalUrl` is still accurate.
+
 ## Keyword Search
 
 Search for specific keywords across a site:
