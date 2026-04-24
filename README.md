@@ -32,6 +32,13 @@ It focuses on technical SEO issues that can be derived from the crawl itself, wi
 - missing `sitemap.xml`
 - missing or empty `llms.txt`
 - optional Lighthouse audits for performance, accessibility, best practices, and SEO
+- images missing explicit width and height attributes
+- images without `loading="lazy"` hints
+- images served in legacy formats (jpg/png/gif) instead of webp/avif
+- missing or zoom-blocking viewport meta (mobile audit)
+- missing Strict-Transport-Security, missing Content-Type, or overly defensive Cache-Control on HTTP responses
+- `X-Robots-Tag` noindex/nofollow directives delivered via HTTP response headers
+- URLs explicitly disallowed by `robots.txt` for the configured user agent
 
 ## Quick Start
 
