@@ -196,4 +196,6 @@ export interface AnalyzeOptions {
   keywords?: string[];
   extractTerms?: boolean;
   topTermsCount?: number;
+  render?: boolean;
+  renderTimeoutMs?: number;
 }

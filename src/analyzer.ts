@@ -1627,9 +1627,28 @@ async function analyzePage(
   allowedHosts: Set<string>,
   options: FetchOptions,
   robotsRules: RobotsRules = {},
+  renderBrowser: import("playwright").Browser | null = null,
 ): Promise<PageReport> {
   try {
-    const response = await fetchTextWithRetry(url, options);
+    let response: FetchResult;
+    if (renderBrowser) {
+      const { renderPage } = await import("./render.js");
+      const context = await renderBrowser.newContext();
+      try {
+        response = await renderPage(
+          url,
+          {
+            timeoutMs: options.timeoutMs ?? 30000,
+            userAgent: options.userAgent ?? DEFAULT_USER_AGENT,
+          },
+          context,
+        );
+      } finally {
+        await context.close();
+      }
+    } else {
+      response = await fetchTextWithRetry(url, options);
+    }
 
     if (response.status >= 400) {
       return {
@@ -2130,6 +2149,8 @@ export async function analyzeSite(
   startUrl: string,
   rawOptions: AnalyzeOptions = {}
 ): Promise<SiteReport> {
+  let renderBrowser: import("playwright").Browser | null = null;
+  try {
   const fullSitemap = rawOptions.fullSitemap ?? false;
   const sampleSitemap = rawOptions.sampleSitemap ?? false;
   const maxPages = fullSitemap ? Number.POSITIVE_INFINITY : rawOptions.maxPages ?? DEFAULT_MAX_PAGES;
@@ -2144,6 +2165,11 @@ export async function analyzeSite(
   const keywords = rawOptions.keywords ?? [];
   const extractTermsEnabled = rawOptions.extractTerms ?? false;
   const topTermsCount = rawOptions.topTermsCount ?? 20;
+
+  if (rawOptions.render) {
+    const { launchRenderBrowser } = await import("./render.js");
+    renderBrowser = await launchRenderBrowser();
+  }
 
   if (fullSitemap && sampleSitemap) {
     throw new Error("fullSitemap and sampleSitemap cannot both be enabled.");
@@ -2206,7 +2232,7 @@ export async function analyzeSite(
     true,
     fullSitemap || sampleSitemap ? Number.POSITIVE_INFINITY : maxQueueSize
   );
-  const startPage = await analyzePage(normalizedStartUrl, allowedHosts, fetchOptions, {});
+  const startPage = await analyzePage(normalizedStartUrl, allowedHosts, fetchOptions, {}, renderBrowser);
   visitedRequestedUrls.add(normalizedStartUrl);
   visitedRequestedUrls.add(startPage.finalUrl);
 
@@ -2280,7 +2306,7 @@ export async function analyzeSite(
     }
 
     const batchPages = await Promise.all(
-      batchUrls.map((url) => analyzePage(url, allowedHosts, fetchOptions, robotsRules))
+      batchUrls.map((url) => analyzePage(url, allowedHosts, fetchOptions, robotsRules, renderBrowser))
     );
 
     for (const page of batchPages) {
@@ -2365,4 +2391,9 @@ export async function analyzeSite(
     keywordSummary,
     topTerms
   };
+  } finally {
+    if (renderBrowser) {
+      await renderBrowser.close();
+    }
+  }
 }
