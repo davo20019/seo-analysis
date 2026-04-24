@@ -3,6 +3,18 @@ import { load } from "cheerio";
 import { buildKeywordSummary, extractTermFrequencies, matchKeywordsOnPage } from "./keywords.js";
 import type { PageTextContent } from "./keywords.js";
 import { runLighthouseAudits } from "./lighthouse.js";
+import {
+  checkImageDimensions,
+  checkImageLazyLoading,
+  checkImageFormats,
+} from "./checks/image-checks.js";
+import { checkViewportMeta } from "./checks/mobile-checks.js";
+import { checkXRobotsTag, checkResponseHeaders } from "./checks/header-checks.js";
+import {
+  parseRobotsRules,
+  checkUrlAgainstRobots,
+  type RobotsRules,
+} from "./checks/robots-checks.js";
 import type {
   AnalyzeOptions,
   DuplicateGroup,
@@ -452,7 +464,7 @@ function extractSchemaTypes(rawScripts: string[]): string[] {
   return [...types];
 }
 
-function parseRobotsTxt(text: string): { blocksAllCrawlers: boolean; sitemaps: string[] } {
+function parseRobotsTxt(text: string): { blocksAllCrawlers: boolean; sitemaps: string[]; rules: RobotsRules } {
   const lines = text.split(/\r?\n/);
   const sitemaps: string[] = [];
   let currentAppliesToAll = false;
@@ -490,9 +502,12 @@ function parseRobotsTxt(text: string): { blocksAllCrawlers: boolean; sitemaps: s
     }
   }
 
+  const rules = parseRobotsRules(text);
+
   return {
     blocksAllCrawlers,
-    sitemaps: [...new Set(sitemaps)]
+    sitemaps: [...new Set(sitemaps)],
+    rules,
   };
 }
 
@@ -828,7 +843,8 @@ async function inspectInfrastructure(
     present: false,
     status: null as number | null,
     sitemaps: [] as string[],
-    blocksAllCrawlers: false
+    blocksAllCrawlers: false,
+    rules: {} as RobotsRules,
   };
 
   const sitemap = {
@@ -862,6 +878,7 @@ async function inspectInfrastructure(
       const parsed = parseRobotsTxt(robotsResult.value.text);
       robotsTxt.sitemaps = parsed.sitemaps;
       robotsTxt.blocksAllCrawlers = parsed.blocksAllCrawlers;
+      robotsTxt.rules = parsed.rules;
 
       if (parsed.blocksAllCrawlers) {
         pushIssue(
@@ -1060,7 +1077,9 @@ function analyzeHtml(
   requestedUrl: string,
   response: FetchResult,
   html: string,
-  allowedHosts: Set<string>
+  allowedHosts: Set<string>,
+  robotsRules: RobotsRules,
+  userAgent: string,
 ): PageReport {
   const $ = load(html);
   const issues: Issue[] = [];
@@ -1560,6 +1579,14 @@ function analyzeHtml(
     );
   }
 
+  for (const issue of checkImageDimensions($)) pushIssue(issues, issue);
+  for (const issue of checkImageLazyLoading($)) pushIssue(issues, issue);
+  for (const issue of checkImageFormats($)) pushIssue(issues, issue);
+  for (const issue of checkViewportMeta($)) pushIssue(issues, issue);
+  for (const issue of checkXRobotsTag(response.headers)) pushIssue(issues, issue);
+  for (const issue of checkResponseHeaders(response.finalUrl, response.headers)) pushIssue(issues, issue);
+  for (const issue of checkUrlAgainstRobots(response.finalUrl, userAgent, robotsRules)) pushIssue(issues, issue);
+
   return {
     url: normalizeUrl(requestedUrl),
     finalUrl,
@@ -1598,7 +1625,8 @@ function analyzeHtml(
 async function analyzePage(
   url: string,
   allowedHosts: Set<string>,
-  options: FetchOptions
+  options: FetchOptions,
+  robotsRules: RobotsRules = {},
 ): Promise<PageReport> {
   try {
     const response = await fetchTextWithRetry(url, options);
@@ -1643,7 +1671,7 @@ async function analyzePage(
       };
     }
 
-    return analyzeHtml(url, response, response.text, allowedHosts);
+    return analyzeHtml(url, response, response.text, allowedHosts, robotsRules, options.userAgent);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown fetch error";
 
@@ -2178,7 +2206,7 @@ export async function analyzeSite(
     true,
     fullSitemap || sampleSitemap ? Number.POSITIVE_INFINITY : maxQueueSize
   );
-  const startPage = await analyzePage(normalizedStartUrl, allowedHosts, fetchOptions);
+  const startPage = await analyzePage(normalizedStartUrl, allowedHosts, fetchOptions, {});
   visitedRequestedUrls.add(normalizedStartUrl);
   visitedRequestedUrls.add(startPage.finalUrl);
 
@@ -2193,6 +2221,7 @@ export async function analyzeSite(
   applyKeywordMatches(startPage, keywords);
 
   const infrastructureResult = await infrastructurePromise;
+  const robotsRules: RobotsRules = infrastructureResult.report.robotsTxt.rules ?? {};
 
   if (sampleSitemap) {
     const remainingPageBudget = Math.max(0, maxPages - pages.length);
@@ -2251,7 +2280,7 @@ export async function analyzeSite(
     }
 
     const batchPages = await Promise.all(
-      batchUrls.map((url) => analyzePage(url, allowedHosts, fetchOptions))
+      batchUrls.map((url) => analyzePage(url, allowedHosts, fetchOptions, robotsRules))
     );
 
     for (const page of batchPages) {

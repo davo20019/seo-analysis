@@ -95,6 +95,7 @@ export interface InfrastructureReport {
     status: number | null;
     sitemaps: string[];
     blocksAllCrawlers: boolean;
+    rules?: Record<string, Array<{ type: "allow" | "disallow"; path: string }>>;
   };
   sitemap: {
     url: string;
