@@ -1,3 +1,5 @@
+import type { RobotsRules } from "./checks/robots-checks.js";
+
 export type Severity = "high" | "medium" | "low";
 
 export interface Issue {
@@ -95,7 +97,7 @@ export interface InfrastructureReport {
     status: number | null;
     sitemaps: string[];
     blocksAllCrawlers: boolean;
-    rules?: Record<string, Array<{ type: "allow" | "disallow"; path: string }>>;
+    rules?: RobotsRules;
   };
   sitemap: {
     url: string;
