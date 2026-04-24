@@ -2158,7 +2158,9 @@ export async function analyzeSite(
   const seedSitemap = fullSitemap || sampleSitemap ? true : rawOptions.seedSitemap ?? true;
   const fetchOptions: FetchOptions = {
     retries: rawOptions.retries ?? DEFAULT_RETRIES,
-    timeoutMs: rawOptions.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    timeoutMs: rawOptions.render
+      ? rawOptions.renderTimeoutMs ?? rawOptions.timeoutMs ?? DEFAULT_TIMEOUT_MS
+      : rawOptions.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     userAgent: rawOptions.userAgent ?? DEFAULT_USER_AGENT
   };
 
