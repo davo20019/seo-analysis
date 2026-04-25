@@ -3,6 +3,26 @@ import { load } from "cheerio";
 import { buildKeywordSummary, extractTermFrequencies, matchKeywordsOnPage } from "./keywords.js";
 import type { PageTextContent } from "./keywords.js";
 import { runLighthouseAudits } from "./lighthouse.js";
+import {
+  checkImageDimensions,
+  checkImageLazyLoading,
+  checkImageFormats,
+} from "./checks/image-checks.js";
+import { checkViewportMeta } from "./checks/mobile-checks.js";
+import { checkXRobotsTag, checkResponseHeaders } from "./checks/header-checks.js";
+import {
+  parseRobotsRules,
+  checkUrlAgainstRobots,
+  type RobotsRules,
+} from "./checks/robots-checks.js";
+import { checkJsonLdValidation } from "./checks/schema-checks.js";
+import { queryCrux, checkCruxMetrics } from "./crux.js";
+import {
+  parseSitemapXml,
+  parseSitemapIndex,
+  checkSitemapLastmod,
+  type SitemapEntry,
+} from "./checks/sitemap-checks.js";
 import type {
   AnalyzeOptions,
   DuplicateGroup,
@@ -69,9 +89,10 @@ const NON_DESCRIPTIVE_ANCHOR_TEXTS = new Set([
 const SKIP_FILE_PATTERN =
   /\.(?:avif|css|gif|ico|jpe?g|js|json|map|mp3|mp4|pdf|png|svg|txt|webm|webp|woff2?|xml|zip)$/i;
 
-interface FetchResult {
+export interface FetchResult {
   contentType: string | null;
   finalUrl: string;
+  headers: Record<string, string>;
   redirectChain: RedirectHop[];
   status: number;
   text: string;
@@ -333,6 +354,14 @@ async function fetchResponse(url: string, options: FetchOptions): Promise<Respon
   }
 }
 
+export function extractHeaderMap(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    out[key.toLowerCase()] = value;
+  });
+  return out;
+}
+
 async function fetchText(url: string, options: FetchOptions): Promise<FetchResult> {
   let currentUrl = normalizeUrl(url);
   const redirectChain: RedirectHop[] = [];
@@ -366,6 +395,7 @@ async function fetchText(url: string, options: FetchOptions): Promise<FetchResul
     return {
       contentType: response.headers.get("content-type"),
       finalUrl: normalizeUrl(response.url || currentUrl),
+      headers: extractHeaderMap(response.headers),
       redirectChain,
       status: response.status,
       text: await response.text()
@@ -442,7 +472,7 @@ function extractSchemaTypes(rawScripts: string[]): string[] {
   return [...types];
 }
 
-function parseRobotsTxt(text: string): { blocksAllCrawlers: boolean; sitemaps: string[] } {
+function parseRobotsTxt(text: string): { blocksAllCrawlers: boolean; sitemaps: string[]; rules: RobotsRules } {
   const lines = text.split(/\r?\n/);
   const sitemaps: string[] = [];
   let currentAppliesToAll = false;
@@ -480,9 +510,12 @@ function parseRobotsTxt(text: string): { blocksAllCrawlers: boolean; sitemaps: s
     }
   }
 
+  const rules = parseRobotsRules(text);
+
   return {
     blocksAllCrawlers,
-    sitemaps: [...new Set(sitemaps)]
+    sitemaps: [...new Set(sitemaps)],
+    rules,
   };
 }
 
@@ -818,7 +851,8 @@ async function inspectInfrastructure(
     present: false,
     status: null as number | null,
     sitemaps: [] as string[],
-    blocksAllCrawlers: false
+    blocksAllCrawlers: false,
+    rules: {} as RobotsRules,
   };
 
   const sitemap = {
@@ -852,6 +886,7 @@ async function inspectInfrastructure(
       const parsed = parseRobotsTxt(robotsResult.value.text);
       robotsTxt.sitemaps = parsed.sitemaps;
       robotsTxt.blocksAllCrawlers = parsed.blocksAllCrawlers;
+      robotsTxt.rules = parsed.rules;
 
       if (parsed.blocksAllCrawlers) {
         pushIssue(
@@ -904,8 +939,35 @@ async function inspectInfrastructure(
 
     if (sitemapResult.value.status >= 200 && sitemapResult.value.status < 300) {
       sitemap.present = true;
-      sitemap.urlCount = (sitemapResult.value.text.match(/<loc>/gi) ?? []).length;
-      sitemap.isIndex = /<sitemapindex[\s>]/i.test(sitemapResult.value.text);
+      const xml = sitemapResult.value.text;
+      sitemap.isIndex = /<sitemapindex[\s>]/i.test(xml);
+
+      let allEntries: SitemapEntry[] = [];
+
+      if (sitemap.isIndex) {
+        const NESTED_CAP = 50;
+        const nestedUrls = parseSitemapIndex(xml);
+        const limited = nestedUrls.slice(0, NESTED_CAP);
+        const nestedResults = await Promise.allSettled(
+          limited.map((u) => fetchTextWithRetry(u, options))
+        );
+        for (const r of nestedResults) {
+          if (r.status === "fulfilled" && r.value.status >= 200 && r.value.status < 300) {
+            allEntries.push(...parseSitemapXml(r.value.text));
+          }
+        }
+        sitemap.urlCount = allEntries.length;
+        if (nestedUrls.length > NESTED_CAP) {
+          sitemap.coverageLimited = true;
+        }
+      } else {
+        allEntries = parseSitemapXml(xml);
+        sitemap.urlCount = allEntries.length;
+      }
+
+      for (const issue of checkSitemapLastmod(allEntries)) {
+        pushIssue(issues, issue);
+      }
     } else if (robotsTxt.sitemaps.length === 0) {
       pushIssue(
         issues,
@@ -1050,7 +1112,9 @@ function analyzeHtml(
   requestedUrl: string,
   response: FetchResult,
   html: string,
-  allowedHosts: Set<string>
+  allowedHosts: Set<string>,
+  robotsRules: RobotsRules,
+  userAgent: string,
 ): PageReport {
   const $ = load(html);
   const issues: Issue[] = [];
@@ -1093,11 +1157,10 @@ function analyzeHtml(
   ]
     .filter(([, value]) => hasSuspiciousMetadataValue(value))
     .map(([field]) => field);
-  const schemaTypes = extractSchemaTypes(
-    $('script[type="application/ld+json"]')
-      .map((_, element) => $(element).html() ?? "")
-      .get()
-  );
+  const ldScripts: string[] = $('script[type="application/ld+json"]')
+    .map((_, element) => $(element).html() ?? "")
+    .get();
+  const schemaTypes = extractSchemaTypes(ldScripts);
   const bodyText = $("body").text().replace(/\s+/g, " ").trim();
   const wordCount = bodyText ? bodyText.split(" ").length : 0;
 
@@ -1550,6 +1613,15 @@ function analyzeHtml(
     );
   }
 
+  for (const issue of checkImageDimensions($)) pushIssue(issues, issue);
+  for (const issue of checkImageLazyLoading($)) pushIssue(issues, issue);
+  for (const issue of checkImageFormats($)) pushIssue(issues, issue);
+  for (const issue of checkViewportMeta($)) pushIssue(issues, issue);
+  for (const issue of checkXRobotsTag(response.headers)) pushIssue(issues, issue);
+  for (const issue of checkResponseHeaders(response.finalUrl, response.headers)) pushIssue(issues, issue);
+  for (const issue of checkUrlAgainstRobots(response.finalUrl, userAgent, robotsRules)) pushIssue(issues, issue);
+  for (const issue of checkJsonLdValidation(ldScripts)) pushIssue(issues, issue);
+
   return {
     url: normalizeUrl(requestedUrl),
     finalUrl,
@@ -1588,10 +1660,30 @@ function analyzeHtml(
 async function analyzePage(
   url: string,
   allowedHosts: Set<string>,
-  options: FetchOptions
+  options: FetchOptions,
+  robotsRules: RobotsRules = {},
+  renderBrowser: import("playwright").Browser | null = null,
 ): Promise<PageReport> {
   try {
-    const response = await fetchTextWithRetry(url, options);
+    let response: FetchResult;
+    if (renderBrowser) {
+      const { renderPage } = await import("./render.js");
+      const context = await renderBrowser.newContext();
+      try {
+        response = await renderPage(
+          url,
+          {
+            timeoutMs: options.timeoutMs ?? 30000,
+            userAgent: options.userAgent ?? DEFAULT_USER_AGENT,
+          },
+          context,
+        );
+      } finally {
+        await context.close();
+      }
+    } else {
+      response = await fetchTextWithRetry(url, options);
+    }
 
     if (response.status >= 400) {
       return {
@@ -1633,7 +1725,7 @@ async function analyzePage(
       };
     }
 
-    return analyzeHtml(url, response, response.text, allowedHosts);
+    return analyzeHtml(url, response, response.text, allowedHosts, robotsRules, options.userAgent);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown fetch error";
 
@@ -2092,6 +2184,8 @@ export async function analyzeSite(
   startUrl: string,
   rawOptions: AnalyzeOptions = {}
 ): Promise<SiteReport> {
+  let renderBrowser: import("playwright").Browser | null = null;
+  try {
   const fullSitemap = rawOptions.fullSitemap ?? false;
   const sampleSitemap = rawOptions.sampleSitemap ?? false;
   const maxPages = fullSitemap ? Number.POSITIVE_INFINITY : rawOptions.maxPages ?? DEFAULT_MAX_PAGES;
@@ -2099,13 +2193,20 @@ export async function analyzeSite(
   const seedSitemap = fullSitemap || sampleSitemap ? true : rawOptions.seedSitemap ?? true;
   const fetchOptions: FetchOptions = {
     retries: rawOptions.retries ?? DEFAULT_RETRIES,
-    timeoutMs: rawOptions.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    timeoutMs: rawOptions.render
+      ? rawOptions.renderTimeoutMs ?? rawOptions.timeoutMs ?? DEFAULT_TIMEOUT_MS
+      : rawOptions.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     userAgent: rawOptions.userAgent ?? DEFAULT_USER_AGENT
   };
 
   const keywords = rawOptions.keywords ?? [];
   const extractTermsEnabled = rawOptions.extractTerms ?? false;
   const topTermsCount = rawOptions.topTermsCount ?? 20;
+
+  if (rawOptions.render) {
+    const { launchRenderBrowser } = await import("./render.js");
+    renderBrowser = await launchRenderBrowser();
+  }
 
   if (fullSitemap && sampleSitemap) {
     throw new Error("fullSitemap and sampleSitemap cannot both be enabled.");
@@ -2168,7 +2269,7 @@ export async function analyzeSite(
     true,
     fullSitemap || sampleSitemap ? Number.POSITIVE_INFINITY : maxQueueSize
   );
-  const startPage = await analyzePage(normalizedStartUrl, allowedHosts, fetchOptions);
+  const startPage = await analyzePage(normalizedStartUrl, allowedHosts, fetchOptions, {}, renderBrowser);
   visitedRequestedUrls.add(normalizedStartUrl);
   visitedRequestedUrls.add(startPage.finalUrl);
 
@@ -2183,6 +2284,40 @@ export async function analyzeSite(
   applyKeywordMatches(startPage, keywords);
 
   const infrastructureResult = await infrastructurePromise;
+
+  if (rawOptions.crux) {
+    if (!rawOptions.cruxApiKey) {
+      pushIssue(
+        infrastructureResult.report.issues,
+        makeIssue(
+          "CRUX_API_KEY_MISSING",
+          "medium",
+          "--crux was passed but CRUX_API_KEY env var is not set — skipping field-data audit.",
+          "Set CRUX_API_KEY in your environment to a valid Google API key with CrUX access.",
+        ),
+      );
+    } else {
+      try {
+        const origin = new URL(normalizedStartUrl).origin;
+        const metrics = await queryCrux(origin, rawOptions.cruxApiKey);
+        for (const issue of checkCruxMetrics(metrics)) {
+          pushIssue(infrastructureResult.report.issues, issue);
+        }
+      } catch (err) {
+        pushIssue(
+          infrastructureResult.report.issues,
+          makeIssue(
+            "CRUX_QUERY_FAILED",
+            "low",
+            `CrUX API query failed: ${(err as Error).message}`,
+            "Verify the CRUX_API_KEY env var is valid and that the origin has CrUX field data.",
+          ),
+        );
+      }
+    }
+  }
+
+  const robotsRules: RobotsRules = infrastructureResult.report.robotsTxt.rules ?? {};
 
   if (sampleSitemap) {
     const remainingPageBudget = Math.max(0, maxPages - pages.length);
@@ -2241,7 +2376,7 @@ export async function analyzeSite(
     }
 
     const batchPages = await Promise.all(
-      batchUrls.map((url) => analyzePage(url, allowedHosts, fetchOptions))
+      batchUrls.map((url) => analyzePage(url, allowedHosts, fetchOptions, robotsRules, renderBrowser))
     );
 
     for (const page of batchPages) {
@@ -2326,4 +2461,9 @@ export async function analyzeSite(
     keywordSummary,
     topTerms
   };
+  } finally {
+    if (renderBrowser) {
+      await renderBrowser.close();
+    }
+  }
 }

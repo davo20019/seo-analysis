@@ -18,7 +18,7 @@ It focuses on technical SEO issues that can be derived from the crawl itself, wi
 - `noindex` directives
 - images without alt text
 - exact missing Open Graph fields
-- missing JSON-LD schema presence
+- missing or invalid JSON-LD structured data
 - low body word count
 - pages with no crawlable internal links
 - internal links with missing anchor text
@@ -32,6 +32,18 @@ It focuses on technical SEO issues that can be derived from the crawl itself, wi
 - missing `sitemap.xml`
 - missing or empty `llms.txt`
 - optional Lighthouse audits for performance, accessibility, best practices, and SEO
+- images missing explicit width and height attributes
+- images without `loading="lazy"` hints
+- images served in legacy formats (jpg/png/gif) instead of webp/avif
+- missing or zoom-blocking viewport meta (mobile audit)
+- missing Strict-Transport-Security, missing Content-Type, or overly defensive Cache-Control on HTTP responses
+- `X-Robots-Tag` noindex/nofollow directives delivered via HTTP response headers
+- URLs explicitly disallowed by `robots.txt` for the configured user agent
+- JSON-LD validation against rich-result requirements: Product, Article (BlogPosting/NewsArticle), FAQPage, BreadcrumbList, Organization, LocalBusiness
+- JSON-LD Product offers without `price` or `priceCurrency`
+- nested sitemap-index resolution (walks one level of nested sitemaps, capped at 50 children)
+- sitemap entries with `lastmod` older than 12 months
+- real-user Core Web Vitals from Google CrUX (LCP/INP/CLS p75) when `--crux` is enabled and `CRUX_API_KEY` is set
 
 ## Quick Start
 
@@ -73,6 +85,23 @@ npm run dev -- https://example.com --exclude-path '/tag/' --exclude-path '/page/
 
 # Add Lighthouse for a few representative pages
 npm run dev -- https://example.com --lighthouse --lighthouse-pages 3
+```
+
+```bash
+# Render pages with headless Chromium (Playwright) — needed for SPAs,
+# JS-challenge sites (Cloudflare turnstile), and pages whose final DOM
+# depends on JS. Slower and heavier than the default static fetch.
+npm run dev -- https://example.com --render --max-pages 5
+```
+
+Notes on `--render`:
+- First `npm install` auto-downloads Chromium (~300MB). To skip (e.g. CI), set `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` and run `npx playwright install chromium` later.
+- Rendering is slower than raw fetch (typical: 2–10s per page). Use `--max-pages` to scope.
+- Known limitation: `redirectChain` is not captured for rendered pages in v1. The `finalUrl` is still accurate.
+
+```bash
+# Query Google's CrUX API for real-user Core Web Vitals (requires CRUX_API_KEY env var)
+CRUX_API_KEY=your-google-api-key npm run dev -- https://example.com --crux --max-pages 5
 ```
 
 ## Keyword Search

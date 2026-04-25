@@ -6,6 +6,7 @@ import type { DuplicateGroup, KeywordSummary, LighthouseReport, SiteReport, Term
 
 interface CliOptions {
   concurrency: number;
+  crux: boolean;
   excludePathPatterns: string[];
   fullSitemap: boolean;
   includePathPatterns: string[];
@@ -19,11 +20,14 @@ interface CliOptions {
   extractTerms: boolean;
   topTerms: number;
   fromDirectory: string | null;
+  render: boolean;
+  renderTimeoutMs: number | null;
   retries: number;
   sampleSitemap: boolean;
   seedSitemap: boolean;
   timeoutMs: number;
   urls: string[];
+  userAgent: string | null;
 }
 
 function printHelp(): void {
@@ -44,6 +48,9 @@ Options:
   --no-sitemap-seed          Do not seed the crawl queue from sitemap URLs
   --lighthouse               Run optional Lighthouse audits on a small set of crawled pages
   --lighthouse-pages <n>     Number of crawled pages to send through Lighthouse. Default: 1
+  --crux                     Query Google's CrUX API for real-user Core Web Vitals (requires CRUX_API_KEY env var)
+  --render                   Render pages with headless Chromium (Playwright) instead of raw fetch — needed for SPAs and JS-challenge sites
+  --render-timeout-ms <n>    Timeout per page render in milliseconds (default: 30000)
   --keyword <term>          Search for this keyword in crawled pages (repeatable)
   --keyword-file <path>     Read keywords from a file, one per line
   --extract-terms           Extract and rank the most frequent terms on the site
@@ -51,6 +58,7 @@ Options:
   --from-directory <path>   Search local HTML files instead of crawling
   --json                     Print raw JSON instead of a text report
   --output <file>            Write the final report to a file
+  --user-agent <string>      Override the HTTP User-Agent sent by the crawler
   --help                     Show this help
 
 Examples:
@@ -100,6 +108,7 @@ function validatePatterns(patterns: string[], flag: string): void {
 function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
     concurrency: 4,
+    crux: false,
     excludePathPatterns: [],
     fullSitemap: false,
     includePathPatterns: [],
@@ -113,11 +122,14 @@ function parseArgs(argv: string[]): CliOptions {
     extractTerms: false,
     topTerms: 20,
     fromDirectory: null,
+    render: false,
+    renderTimeoutMs: null,
     retries: 2,
     sampleSitemap: false,
     seedSitemap: true,
     timeoutMs: 10_000,
-    urls: []
+    urls: [],
+    userAgent: null
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -145,6 +157,11 @@ function parseArgs(argv: string[]): CliOptions {
 
     if (arg === "--no-sitemap-seed") {
       options.seedSitemap = false;
+      continue;
+    }
+
+    if (arg === "--crux") {
+      options.crux = true;
       continue;
     }
 
@@ -242,6 +259,28 @@ function parseArgs(argv: string[]): CliOptions {
       continue;
     }
 
+    if (arg === "--render") {
+      options.render = true;
+      continue;
+    }
+
+    if (arg === "--render-timeout-ms") {
+      options.renderTimeoutMs = parseNumberValue(
+        requireValue(argv, index, "--render-timeout-ms"),
+        "--render-timeout-ms"
+      );
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--render-timeout-ms=")) {
+      options.renderTimeoutMs = parseNumberValue(
+        arg.split("=")[1] ?? "",
+        "--render-timeout-ms"
+      );
+      continue;
+    }
+
     if (arg === "--output") {
       options.outputPath = requireValue(argv, index, "--output");
       index += 1;
@@ -250,6 +289,17 @@ function parseArgs(argv: string[]): CliOptions {
 
     if (arg.startsWith("--output=")) {
       options.outputPath = arg.split("=")[1] ?? null;
+      continue;
+    }
+
+    if (arg === "--user-agent") {
+      options.userAgent = requireValue(argv, index, "--user-agent");
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--user-agent=")) {
+      options.userAgent = arg.split("=").slice(1).join("=");
       continue;
     }
 
@@ -593,10 +643,15 @@ async function main(): Promise<void> {
             lighthouse: options.lighthouse,
             lighthousePageCount: options.lighthousePages,
             maxPages: options.maxPages,
+            crux: options.crux,
+            ...(process.env.CRUX_API_KEY ? { cruxApiKey: process.env.CRUX_API_KEY } : {}),
+            render: options.render,
+            ...(options.renderTimeoutMs ? { renderTimeoutMs: options.renderTimeoutMs } : {}),
             retries: options.retries,
             sampleSitemap: options.sampleSitemap,
             seedSitemap: options.seedSitemap,
             timeoutMs: options.timeoutMs,
+            ...(options.userAgent ? { userAgent: options.userAgent } : {}),
           })
         );
       }
