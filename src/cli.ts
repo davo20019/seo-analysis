@@ -6,6 +6,7 @@ import type { DuplicateGroup, KeywordSummary, LighthouseReport, SiteReport, Term
 
 interface CliOptions {
   concurrency: number;
+  crux: boolean;
   excludePathPatterns: string[];
   fullSitemap: boolean;
   includePathPatterns: string[];
@@ -47,6 +48,7 @@ Options:
   --no-sitemap-seed          Do not seed the crawl queue from sitemap URLs
   --lighthouse               Run optional Lighthouse audits on a small set of crawled pages
   --lighthouse-pages <n>     Number of crawled pages to send through Lighthouse. Default: 1
+  --crux                     Query Google's CrUX API for real-user Core Web Vitals (requires CRUX_API_KEY env var)
   --render                   Render pages with headless Chromium (Playwright) instead of raw fetch — needed for SPAs and JS-challenge sites
   --render-timeout-ms <n>    Timeout per page render in milliseconds (default: 30000)
   --keyword <term>          Search for this keyword in crawled pages (repeatable)
@@ -106,6 +108,7 @@ function validatePatterns(patterns: string[], flag: string): void {
 function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
     concurrency: 4,
+    crux: false,
     excludePathPatterns: [],
     fullSitemap: false,
     includePathPatterns: [],
@@ -154,6 +157,11 @@ function parseArgs(argv: string[]): CliOptions {
 
     if (arg === "--no-sitemap-seed") {
       options.seedSitemap = false;
+      continue;
+    }
+
+    if (arg === "--crux") {
+      options.crux = true;
       continue;
     }
 
@@ -635,6 +643,8 @@ async function main(): Promise<void> {
             lighthouse: options.lighthouse,
             lighthousePageCount: options.lighthousePages,
             maxPages: options.maxPages,
+            crux: options.crux,
+            ...(process.env.CRUX_API_KEY ? { cruxApiKey: process.env.CRUX_API_KEY } : {}),
             render: options.render,
             ...(options.renderTimeoutMs ? { renderTimeoutMs: options.renderTimeoutMs } : {}),
             retries: options.retries,

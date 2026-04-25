@@ -198,4 +198,6 @@ export interface AnalyzeOptions {
   topTermsCount?: number;
   render?: boolean;
   renderTimeoutMs?: number;
+  crux?: boolean;
+  cruxApiKey?: string;
 }

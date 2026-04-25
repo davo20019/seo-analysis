@@ -16,6 +16,7 @@ import {
   type RobotsRules,
 } from "./checks/robots-checks.js";
 import { checkJsonLdValidation } from "./checks/schema-checks.js";
+import { queryCrux, checkCruxMetrics } from "./crux.js";
 import {
   parseSitemapXml,
   parseSitemapIndex,
@@ -2283,6 +2284,39 @@ export async function analyzeSite(
   applyKeywordMatches(startPage, keywords);
 
   const infrastructureResult = await infrastructurePromise;
+
+  if (rawOptions.crux) {
+    if (!rawOptions.cruxApiKey) {
+      pushIssue(
+        infrastructureResult.report.issues,
+        makeIssue(
+          "CRUX_API_KEY_MISSING",
+          "medium",
+          "--crux was passed but CRUX_API_KEY env var is not set — skipping field-data audit.",
+          "Set CRUX_API_KEY in your environment to a valid Google API key with CrUX access.",
+        ),
+      );
+    } else {
+      try {
+        const origin = new URL(normalizedStartUrl).origin;
+        const metrics = await queryCrux(origin, rawOptions.cruxApiKey);
+        for (const issue of checkCruxMetrics(metrics)) {
+          pushIssue(infrastructureResult.report.issues, issue);
+        }
+      } catch (err) {
+        pushIssue(
+          infrastructureResult.report.issues,
+          makeIssue(
+            "CRUX_QUERY_FAILED",
+            "low",
+            `CrUX API query failed: ${(err as Error).message}`,
+            "Verify the CRUX_API_KEY env var is valid and that the origin has CrUX field data.",
+          ),
+        );
+      }
+    }
+  }
+
   const robotsRules: RobotsRules = infrastructureResult.report.robotsTxt.rules ?? {};
 
   if (sampleSitemap) {
