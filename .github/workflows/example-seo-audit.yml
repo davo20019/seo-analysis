@@ -1,0 +1,44 @@
+name: Example SEO Audit
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "URL to audit"
+        required: true
+        default: "https://example.com"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run SEO audit
+        id: seo
+        uses: ./
+        with:
+          url: ${{ github.event.inputs.url || 'https://example.com' }}
+          max-pages: "5"
+          fail-on: high
+
+      - name: Show results
+        env:
+          PAGES: ${{ steps.seo.outputs.pages-crawled }}
+          HIGH: ${{ steps.seo.outputs.high-issues }}
+          MEDIUM: ${{ steps.seo.outputs.medium-issues }}
+          LOW: ${{ steps.seo.outputs.low-issues }}
+        run: |
+          echo "Pages crawled: $PAGES"
+          echo "High: $HIGH"
+          echo "Medium: $MEDIUM"
+          echo "Low: $LOW"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: seo-report
+          path: ${{ steps.seo.outputs.report-path }}
