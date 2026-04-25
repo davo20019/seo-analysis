@@ -106,3 +106,84 @@ export function diffSiteReports(oldReport: SiteReport, newReport: SiteReport): S
     statusChanges,
   };
 }
+
+export function renderDiffText(diff: SiteReportDiff): string {
+  const lines: string[] = [];
+  lines.push(`Diff: ${diff.oldUrl} → ${diff.newUrl}`);
+  lines.push(`Severity totals delta: high: ${signed(diff.severityDelta.high)}  medium: ${signed(diff.severityDelta.medium)}  low: ${signed(diff.severityDelta.low)}`);
+  lines.push("");
+
+  const hasRegressions =
+    diff.issuesByCode.new.length > 0 ||
+    diff.issuesByCode.increased.length > 0 ||
+    diff.statusChanges.some((s) => regressed(s));
+
+  if (!hasRegressions && diff.issuesByCode.resolved.length === 0 && diff.issuesByCode.decreased.length === 0 &&
+      diff.pageSet.added.length === 0 && diff.pageSet.removed.length === 0) {
+    lines.push("No regressions and no improvements — reports are equivalent.");
+    return lines.join("\n");
+  }
+
+  if (!hasRegressions) {
+    lines.push("No regressions.");
+  }
+
+  if (diff.issuesByCode.new.length > 0) {
+    lines.push(`New issues (${diff.issuesByCode.new.length}):`);
+    for (const d of diff.issuesByCode.new) lines.push(`  - ${d.code}: 0 → ${d.newCount}`);
+    lines.push("");
+  }
+
+  if (diff.issuesByCode.increased.length > 0) {
+    lines.push(`Increased (${diff.issuesByCode.increased.length}):`);
+    for (const d of diff.issuesByCode.increased) lines.push(`  - ${d.code}: ${d.oldCount} → ${d.newCount}`);
+    lines.push("");
+  }
+
+  if (diff.issuesByCode.resolved.length > 0) {
+    lines.push(`Resolved (${diff.issuesByCode.resolved.length}):`);
+    for (const d of diff.issuesByCode.resolved) lines.push(`  + ${d.code}: ${d.oldCount} → 0`);
+    lines.push("");
+  }
+
+  if (diff.issuesByCode.decreased.length > 0) {
+    lines.push(`Decreased (${diff.issuesByCode.decreased.length}):`);
+    for (const d of diff.issuesByCode.decreased) lines.push(`  + ${d.code}: ${d.oldCount} → ${d.newCount}`);
+    lines.push("");
+  }
+
+  if (diff.statusChanges.length > 0) {
+    lines.push(`Status code changes (${diff.statusChanges.length}):`);
+    for (const s of diff.statusChanges) lines.push(`  ${regressed(s) ? "-" : "+"} ${s.url}: ${s.oldStatus} → ${s.newStatus}`);
+    lines.push("");
+  }
+
+  if (diff.pageSet.added.length > 0) {
+    lines.push(`Pages added (${diff.pageSet.added.length}):`);
+    for (const u of diff.pageSet.added.slice(0, 20)) lines.push(`  + ${u}`);
+    if (diff.pageSet.added.length > 20) lines.push(`  ... and ${diff.pageSet.added.length - 20} more`);
+    lines.push("");
+  }
+
+  if (diff.pageSet.removed.length > 0) {
+    lines.push(`Pages removed (${diff.pageSet.removed.length}):`);
+    for (const u of diff.pageSet.removed.slice(0, 20)) lines.push(`  - ${u}`);
+    if (diff.pageSet.removed.length > 20) lines.push(`  ... and ${diff.pageSet.removed.length - 20} more`);
+    lines.push("");
+  }
+
+  return lines.join("\n").trimEnd();
+}
+
+function signed(n: number): string {
+  return n >= 0 ? `+${n}` : `${n}`;
+}
+
+function regressed(s: PageDelta): boolean {
+  if (s.oldStatus == null || s.newStatus == null) return false;
+  return s.oldStatus < 400 && s.newStatus >= 400;
+}
+
+export function renderDiffJson(diff: SiteReportDiff): string {
+  return JSON.stringify(diff, null, 2);
+}

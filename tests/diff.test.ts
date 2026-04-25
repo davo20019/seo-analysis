@@ -97,3 +97,42 @@ describe("diffSiteReports", () => {
     expect(diff.statusChanges).toEqual([]);
   });
 });
+
+import { renderDiffText, renderDiffJson } from "../src/diff.js";
+
+describe("renderDiffText", () => {
+  it("highlights regressions with - and improvements with +", () => {
+    const oldR = fixture({
+      pages: [page("https://x/a", 200, ["FOO"])],
+      summary: { ...fixture({}).summary, issueTotals: { high: 1, medium: 0, low: 0 } },
+    });
+    const newR = fixture({
+      pages: [page("https://x/a", 200, ["FOO", "FOO", "BAR"])],
+      summary: { ...fixture({}).summary, issueTotals: { high: 3, medium: 0, low: 0 } },
+    });
+    const diff = diffSiteReports(oldR, newR);
+    const text = renderDiffText(diff);
+    expect(text).toContain("New issues");
+    expect(text).toContain("BAR");
+    expect(text).toContain("Increased");
+    expect(text).toContain("FOO");
+    expect(text).toContain("high: +2");
+  });
+
+  it("reports a healthy diff cleanly", () => {
+    const sameR = fixture({});
+    const diff = diffSiteReports(sameR, sameR);
+    const text = renderDiffText(diff);
+    expect(text).toContain("No regressions");
+  });
+});
+
+describe("renderDiffJson", () => {
+  it("returns a valid JSON string round-trippable to the diff", () => {
+    const oldR = fixture({});
+    const newR = fixture({ pages: [page("https://x/new", 200)] });
+    const diff = diffSiteReports(oldR, newR);
+    const json = renderDiffJson(diff);
+    expect(JSON.parse(json)).toEqual(diff);
+  });
+});
