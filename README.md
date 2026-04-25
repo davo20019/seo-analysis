@@ -141,6 +141,54 @@ The diff highlights:
 - HTTP status changes on common pages
 - Pages added or removed from the crawl
 
+## GitHub Action
+
+Run SEO audits in CI without writing any glue code:
+
+```yaml
+# .github/workflows/seo.yml
+name: SEO Audit
+on: [pull_request]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: davo20019/seo-analysis@v1
+        with:
+          url: https://staging.mysite.com
+          max-pages: 50
+          fail-on: high   # block PRs that introduce high-severity issues
+```
+
+### Inputs
+
+| Input | Default | Description |
+|---|---|---|
+| `url` | (required) | URL to crawl |
+| `max-pages` | `50` | Maximum pages to crawl |
+| `concurrency` | (CLI default) | Pages fetched in parallel |
+| `render` | `false` | Use Playwright for JS rendering |
+| `fail-on` | (none) | Fail the workflow if issues at this severity exist (`high`, `medium`, `low`) |
+| `crux` | `false` | Query Google CrUX for real-user Core Web Vitals |
+| `crux-api-key` | (none) | API key for CrUX (use a repo secret) |
+| `user-agent` | (default) | Override the crawler's User-Agent |
+| `include-paths` | (none) | Comma-separated regex; only crawl matching URLs |
+| `exclude-paths` | (none) | Comma-separated regex; skip matching URLs |
+| `output-json` | `seo-report.json` | Where to write the JSON report |
+| `output-html` | (none) | Optional path for the HTML report |
+
+### Outputs
+
+| Output | Description |
+|---|---|
+| `high-issues` | Count of high-severity issues |
+| `medium-issues` | Count of medium-severity issues |
+| `low-issues` | Count of low-severity issues |
+| `pages-crawled` | Number of pages successfully crawled |
+| `report-path` | Path to the JSON report (use with `actions/upload-artifact`) |
+
 ## Keyword Search
 
 Search for specific keywords across a site:
