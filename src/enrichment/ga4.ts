@@ -128,12 +128,13 @@ async function listAccessibleProperties(
     pageToken = body.nextPageToken;
   } while (pageToken);
 
-  const candidates: Ga4PropertyCandidate[] = [];
-  for (const { property, displayName } of properties) {
-    const streams = await listWebDataStreams(property, accessToken, fetcher);
-    if (streams.length > 0) candidates.push({ property, displayName, webStreams: streams });
-  }
-  return candidates;
+  const candidateLists = await Promise.all(
+    properties.map(async ({ property, displayName }) => {
+      const streams = await listWebDataStreams(property, accessToken, fetcher);
+      return streams.length > 0 ? { property, displayName, webStreams: streams } : null;
+    })
+  );
+  return candidateLists.filter((c): c is Ga4PropertyCandidate => c !== null);
 }
 
 async function listWebDataStreams(
