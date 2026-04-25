@@ -38,6 +38,9 @@ It focuses on technical SEO issues that can be derived from the crawl itself, wi
 - missing or zoom-blocking viewport meta (mobile audit)
 - missing Strict-Transport-Security, missing Content-Type, or overly defensive Cache-Control on HTTP responses
 - `X-Robots-Tag` noindex/nofollow directives delivered via HTTP response headers
+- HTTP `Link: rel="canonical"` mismatches with the HTML `<link rel="canonical">`, multiple/invalid canonical Link values
+- HTML responses served without `Content-Encoding` (gzip/br/zstd) compression
+- compressed responses missing `Vary: Accept-Encoding` (shared-cache hazard)
 - URLs explicitly disallowed by `robots.txt` for the configured user agent
 - JSON-LD validation against rich-result requirements: Product, Article (BlogPosting/NewsArticle), FAQPage, BreadcrumbList, Organization, LocalBusiness
 - JSON-LD Product offers without `price` or `priceCurrency`
