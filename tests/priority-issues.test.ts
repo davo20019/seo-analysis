@@ -62,6 +62,24 @@ describe("buildPriorityIssues", () => {
     expect(result[0].rankValue).toBe(100);
   });
 
+  it("populates deprecated compat fields as 0 for GA4-ranked entries without GSC data", () => {
+    const pages = [
+      makePage("https://example.com/a", {
+        issues: [{ code: "TITLE_MISSING", severity: "high", message: "x", recommendation: "y" }],
+        metrics: { ga4: { sessions: 100, screenPageViews: 200, totalUsers: 80, engagementRate: 0.6 } },
+      }),
+    ];
+    const result = buildPriorityIssues(pages);
+    expect(result).toHaveLength(1);
+    expect(result[0].rankedBy).toBe("ga4");
+    // Deprecated GSC-specific fields must come out as 0 (not undefined) so
+    // existing downstream JSON consumers reading `priorityIssues[].impressions`
+    // still see a numeric value during the one-minor-cycle deprecation window.
+    expect(result[0].impressions).toBe(0);
+    expect(result[0].clicks).toBe(0);
+    expect(result[0].position).toBe(0);
+  });
+
   it("prefers GSC when both GSC and GA4 are present", () => {
     const pages = [
       makePage("https://example.com/a", {
