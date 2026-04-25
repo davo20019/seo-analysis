@@ -285,6 +285,73 @@ describe("Ga4EnrichmentSource Admin-API auto-resolve", () => {
     expect(map.size).toBeGreaterThanOrEqual(150_000);
   });
 
+  it("maps 403 to a Property-Access-Management hint", async () => {
+    const mockFetch: typeof fetch = async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.startsWith("https://oauth2.googleapis.com/token")) {
+        return jsonResponse({ access_token: "fake-token", expires_in: 3600 });
+      }
+      if (url.includes(":runReport")) {
+        return new Response("Forbidden", { status: 403 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+    const source = new Ga4EnrichmentSource({
+      property: "properties/999",
+      auth: new GoogleServiceAccountAuth({ json: testServiceAccountJson() }, mockFetch),
+      fetcher: mockFetch,
+    });
+    await expect(source.fetch("https://example.com", "https://example.com/")).rejects.toThrow(
+      /Property Access Management/i,
+    );
+  });
+
+  it("maps 404 to a property-not-found hint", async () => {
+    const mockFetch: typeof fetch = async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.startsWith("https://oauth2.googleapis.com/token")) {
+        return jsonResponse({ access_token: "fake-token", expires_in: 3600 });
+      }
+      if (url.includes(":runReport")) {
+        return new Response("Not found", { status: 404 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+    const source = new Ga4EnrichmentSource({
+      property: "properties/9999999",
+      auth: new GoogleServiceAccountAuth({ json: testServiceAccountJson() }, mockFetch),
+      fetcher: mockFetch,
+    });
+    await expect(source.fetch("https://example.com", "https://example.com/")).rejects.toThrow(
+      /not found|--ga4-property/i,
+    );
+  });
+
+  it("retries once on 429 with a short backoff, then surfaces the error", async () => {
+    let calls = 0;
+    const mockFetch: typeof fetch = async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.startsWith("https://oauth2.googleapis.com/token")) {
+        return jsonResponse({ access_token: "fake-token", expires_in: 3600 });
+      }
+      if (url.includes(":runReport")) {
+        calls += 1;
+        return new Response("Too many", { status: 429 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+    const source = new Ga4EnrichmentSource({
+      property: "properties/999",
+      auth: new GoogleServiceAccountAuth({ json: testServiceAccountJson() }, mockFetch),
+      fetcher: mockFetch,
+      delayMs: () => Promise.resolve(),  // skip the 2s real-time wait
+    });
+    await expect(source.fetch("https://example.com", "https://example.com/")).rejects.toThrow(
+      /429/,
+    );
+    expect(calls).toBe(2); // initial + one retry
+  });
+
   it("canonicalizes URLs the same way GSC does (utm-stripping, case)", async () => {
     const mockFetch: typeof fetch = async (input) => {
       const url = typeof input === "string" ? input : input.toString();

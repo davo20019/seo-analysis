@@ -31,6 +31,8 @@ export interface Ga4Options {
   days?: number;
   auth: GoogleAccessTokenProvider;
   fetcher?: typeof fetch;
+  /** Injectable delay for testing the 429 retry without real wait. Default: setTimeout-backed 2s. */
+  delayMs?: (ms: number) => Promise<void>;
 }
 
 export class Ga4EnrichmentSource implements EnrichmentSource<Ga4PageMetrics> {
@@ -51,7 +53,8 @@ export class Ga4EnrichmentSource implements EnrichmentSource<Ga4PageMetrics> {
     const endDate = formatDate(new Date());
     const startDate = formatDate(new Date(Date.now() - days * 24 * 60 * 60 * 1000));
 
-    const rows = await queryAllRows(property, startDate, endDate, accessToken, fetcher);
+    const delay = this.opts.delayMs ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    const rows = await queryAllRows(property, startDate, endDate, accessToken, fetcher, delay);
     const metrics = buildMetricsMap(rows);
     this.lastResult = { property, startDate, endDate, totalRows: rows.length, metrics };
     return metrics;
@@ -158,6 +161,7 @@ async function queryAllRows(
   endDate: string,
   accessToken: string,
   fetcher: typeof fetch,
+  delay: (ms: number) => Promise<void>,
 ): Promise<Ga4Row[]> {
   const PAGE_SIZE = 100_000;
   const MAX_TOTAL_ROWS = 100_000_000;
@@ -167,7 +171,7 @@ async function queryAllRows(
 
   while (allRows.length < total && allRows.length < MAX_TOTAL_ROWS) {
     const url = `${DATA_API_BASE}/${property}:runReport`;
-    const response = await fetcher(url, {
+    const requestInit: RequestInit = {
       method: "POST",
       headers: {
         authorization: `Bearer ${accessToken}`,
@@ -186,7 +190,14 @@ async function queryAllRows(
         offset,
         keepEmptyRows: false,
       }),
-    });
+    };
+
+    let response = await fetcher(url, requestInit);
+    if (response.status === 429) {
+      await delay(2000);
+      response = await fetcher(url, requestInit);
+    }
+
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       throw mapDataApiError(response.status, text, property);
@@ -227,7 +238,21 @@ function parseNum(value: string | undefined): number {
 }
 
 function mapDataApiError(status: number, body: string, property: string): Error {
-  // Filled in by Task 6 — for now, a generic error with the body.
+  if (status === 401) {
+    return new Error(
+      `GA4 token exchange failed (401): ${body}. Check service-account key and that the analytics.readonly scope is enabled.`,
+    );
+  }
+  if (status === 403) {
+    return new Error(
+      `GA4 Data API forbidden (403). Grant the service-account email the Viewer role on ${property} in GA4 Admin → Property Access Management. Body: ${body}`,
+    );
+  }
+  if (status === 404) {
+    return new Error(
+      `GA4 property not found (404) for ${property}. Pass --ga4-property properties/N or verify the SA email has access. Body: ${body}`,
+    );
+  }
   return new Error(`GA4 Data API failed (${status}) for ${property}: ${body}`);
 }
 
