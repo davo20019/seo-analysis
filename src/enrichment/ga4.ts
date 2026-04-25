@@ -164,7 +164,10 @@ async function queryAllRows(
   delay: (ms: number) => Promise<void>,
 ): Promise<Ga4Row[]> {
   const PAGE_SIZE = 100_000;
-  const MAX_TOTAL_ROWS = 100_000_000;
+  // GA4 properties can have far more unique URLs than GSC (which caps at the
+  // dimension-row hard limit). 1M is well above any realistic single-origin
+  // site within a 90-day window while bounding worst-case fetch loops.
+  const MAX_TOTAL_ROWS = 1_000_000;
   const allRows: Ga4Row[] = [];
   let offset = 0;
   let total = Infinity;
@@ -291,5 +294,3 @@ function parseHost(url: string): string | null {
     return null;
   }
 }
-
-export { canonicalizeForMatch, indexByCanonicalUrl };
