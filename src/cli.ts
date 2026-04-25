@@ -5,7 +5,7 @@ import { scanDirectory } from "./directory-scanner.js";
 import type { DuplicateGroup, KeywordSummary, LighthouseReport, SiteReport, TermFrequency } from "./types.js";
 
 interface CliOptions {
-  concurrency: number;
+  concurrency: number | null;
   crux: boolean;
   excludePathPatterns: string[];
   fullSitemap: boolean;
@@ -41,7 +41,7 @@ Options:
   --full-sitemap             Crawl every sitemap URL instead of stopping at --max-pages
   --sample-sitemap           Sample representative sitemap URLs up to --max-pages
   --timeout-ms <number>      Request timeout in milliseconds. Default: 10000
-  --concurrency <number>     Number of pages to fetch in parallel. Default: 4
+  --concurrency <number>     Number of pages to fetch in parallel. Default: 6
   --retries <number>         Retry count for failed or retryable requests. Default: 2
   --include-path <regex>     Only crawl discovered URLs whose path matches the regex
   --exclude-path <regex>     Skip discovered URLs whose path matches the regex
@@ -107,7 +107,7 @@ function validatePatterns(patterns: string[], flag: string): void {
 
 function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
-    concurrency: 4,
+    concurrency: null,
     crux: false,
     excludePathPatterns: [],
     fullSitemap: false,
@@ -389,7 +389,7 @@ function parseArgs(argv: string[]): CliOptions {
     throw new Error("--timeout-ms must be a positive integer.");
   }
 
-  if (!Number.isFinite(options.concurrency) || options.concurrency < 1) {
+  if (options.concurrency !== null && (!Number.isFinite(options.concurrency) || options.concurrency < 1)) {
     throw new Error("--concurrency must be a positive integer.");
   }
 
@@ -633,7 +633,7 @@ async function main(): Promise<void> {
       for (const url of options.urls) {
         reports.push(
           await analyzeSite(url, {
-            concurrency: options.concurrency,
+            ...(options.concurrency !== null ? { concurrency: options.concurrency } : {}),
             excludePathPatterns: options.excludePathPatterns,
             fullSitemap: options.fullSitemap,
             includePathPatterns: options.includePathPatterns,
