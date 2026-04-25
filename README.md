@@ -119,6 +119,28 @@ npm run dev -- https://example.com --max-pages 25 --pdf-report report.pdf
 npm run dev -- https://example.com --max-pages 25 --html-report report.html --pdf-report report.pdf
 ```
 
+## Diff Reports
+
+Compare two crawl reports to see what changed between runs:
+
+```bash
+# Compare last week's crawl to this week's
+npm run dev -- diff old-report.json new-report.json
+
+# Output as JSON for piping into another tool
+npm run dev -- diff old.json new.json --json --output diff.json
+
+# Fail (non-zero exit) if any high-severity issues were added — useful in CI
+npm run dev -- diff old.json new.json --fail-on high
+```
+
+The diff highlights:
+- New issue codes (didn't appear in old)
+- Resolved issue codes (appeared in old, not in new)
+- Counts that increased or decreased
+- HTTP status changes on common pages
+- Pages added or removed from the crawl
+
 ## Keyword Search
 
 Search for specific keywords across a site:
