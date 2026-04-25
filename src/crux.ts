@@ -87,3 +87,29 @@ export function checkCruxMetrics(metrics: CruxMetrics): Issue[] {
 
   return issues;
 }
+
+const CRUX_ENDPOINT = "https://chromeuxreport.googleapis.com/v1/records:queryRecord";
+
+export async function queryCrux(
+  origin: string,
+  apiKey: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<CruxMetrics> {
+  const url = `${CRUX_ENDPOINT}?key=${encodeURIComponent(apiKey)}`;
+  const response = await fetchImpl(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ origin }),
+  });
+
+  if (response.status === 404) {
+    return { lcpMs: null, inpMs: null, cls: null };
+  }
+
+  if (!response.ok) {
+    throw new Error(`CrUX API returned ${response.status}`);
+  }
+
+  const json = await response.json();
+  return parseCruxResponse(json);
+}

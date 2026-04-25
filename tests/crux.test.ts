@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseCruxResponse, checkCruxMetrics } from "../src/crux.js";
+import { parseCruxResponse, checkCruxMetrics, queryCrux } from "../src/crux.js";
 
 describe("parseCruxResponse", () => {
   it("extracts p75 metrics", () => {
@@ -52,5 +52,42 @@ describe("checkCruxMetrics", () => {
 
   it("returns empty when metrics are null", () => {
     expect(checkCruxMetrics({ lcpMs: null, inpMs: null, cls: null })).toEqual([]);
+  });
+});
+
+describe("queryCrux", () => {
+  it("calls the CrUX API with the provided origin and returns parsed metrics", async () => {
+    const fakeFetch: typeof fetch = async (input, _init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      expect(url).toContain("chromeuxreport.googleapis.com");
+      expect(url).toContain("key=test-key");
+      return new Response(
+        JSON.stringify({
+          record: {
+            key: { origin: "https://x" },
+            metrics: {
+              largest_contentful_paint: { percentiles: { p75: 2200 } },
+              cumulative_layout_shift: { percentiles: { p75: "0.05" } },
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+    const result = await queryCrux("https://x", "test-key", fakeFetch);
+    expect(result).toEqual({ lcpMs: 2200, inpMs: null, cls: 0.05 });
+  });
+
+  it("returns null metrics on a 404 (no CrUX data for origin)", async () => {
+    const fakeFetch: typeof fetch = async () =>
+      new Response(JSON.stringify({ error: { code: 404 } }), { status: 404 });
+    const result = await queryCrux("https://nodata", "k", fakeFetch);
+    expect(result).toEqual({ lcpMs: null, inpMs: null, cls: null });
+  });
+
+  it("throws on non-200 non-404 errors", async () => {
+    const fakeFetch: typeof fetch = async () =>
+      new Response("rate limited", { status: 429 });
+    await expect(queryCrux("https://x", "k", fakeFetch)).rejects.toThrow(/429/);
   });
 });
