@@ -93,6 +93,7 @@ export interface PageReport {
 
 export interface PageMetrics {
   gsc?: GscPageMetrics;
+  ga4?: Ga4PageMetrics;
 }
 
 export interface GscPageMetrics {
@@ -100,6 +101,23 @@ export interface GscPageMetrics {
   impressions: number;
   ctr: number;
   position: number;
+}
+
+export interface Ga4PageMetrics {
+  sessions: number;
+  screenPageViews: number;
+  totalUsers: number;
+  engagementRate: number;
+}
+
+export interface Ga4EnrichmentReport {
+  property: string;
+  startDate: string;
+  endDate: string;
+  totalRows: number;
+  matchedPages: number;
+  unmatchedRows: number;
+  error: string | null;
 }
 
 export interface GscEnrichmentReport {
@@ -116,9 +134,16 @@ export interface PrioritySummaryEntry {
   code: string;
   severity: Severity;
   url: string;
-  impressions: number;
-  clicks: number;
-  position: number;
+  rankedBy: "gsc" | "ga4";
+  rankValue: number;
+  metrics: PageMetrics;
+
+  /** @deprecated Read from `metrics.gsc.impressions`. Kept for one minor cycle. */
+  impressions?: number;
+  /** @deprecated Read from `metrics.gsc.clicks`. Kept for one minor cycle. */
+  clicks?: number;
+  /** @deprecated Read from `metrics.gsc.position`. Kept for one minor cycle. */
+  position?: number;
 }
 
 export interface InfrastructureReport {
@@ -280,6 +305,7 @@ export interface SiteReport {
   topTerms?: TermFrequency[];
   agentReadiness?: AgentReadinessReport;
   gsc?: GscEnrichmentReport;
+  ga4?: Ga4EnrichmentReport;
 }
 
 export interface AnalyzeOptions {
@@ -308,4 +334,9 @@ export interface AnalyzeOptions {
   gscDays?: number;
   gscServiceAccountKey?: string;
   gscServiceAccountKeyFile?: string;
+  ga4?: boolean;
+  ga4Property?: string;
+  ga4Days?: number;
+  ga4ServiceAccountKey?: string;
+  ga4ServiceAccountKeyFile?: string;
 }
