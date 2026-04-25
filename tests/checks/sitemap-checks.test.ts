@@ -39,3 +39,32 @@ describe("parseSitemapIndex", () => {
     expect(parseSitemapIndex(`<sitemapindex></sitemapindex>`)).toEqual([]);
   });
 });
+
+import { checkSitemapLastmod } from "../../src/checks/sitemap-checks.js";
+
+describe("checkSitemapLastmod", () => {
+  const now = new Date("2026-04-25T00:00:00Z");
+
+  it("flags entries with lastmod older than 12 months", () => {
+    const issues = checkSitemapLastmod([
+      { url: "https://x/a", lastmod: "2024-01-01" },
+      { url: "https://x/b", lastmod: "2026-01-01" },
+    ], now);
+    expect(issues.map((i) => i.code)).toContain("SITEMAP_LASTMOD_STALE");
+    expect(issues[0].message).toContain("1");
+  });
+
+  it("ignores entries without lastmod (no false positives)", () => {
+    expect(checkSitemapLastmod([{ url: "https://x/a", lastmod: null }], now)).toEqual([]);
+  });
+
+  it("returns no issue when nothing is stale", () => {
+    expect(checkSitemapLastmod([
+      { url: "https://x/a", lastmod: "2026-01-01" },
+    ], now)).toEqual([]);
+  });
+
+  it("ignores unparseable lastmod values", () => {
+    expect(checkSitemapLastmod([{ url: "https://x/a", lastmod: "not-a-date" }], now)).toEqual([]);
+  });
+});

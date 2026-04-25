@@ -32,3 +32,22 @@ export function parseSitemapIndex(xml: string): string[] {
   }
   return out;
 }
+
+const STALE_THRESHOLD_MS = 365 * 24 * 60 * 60 * 1000;
+
+export function checkSitemapLastmod(entries: SitemapEntry[], now: Date = new Date()): Issue[] {
+  let staleCount = 0;
+  for (const entry of entries) {
+    if (!entry.lastmod) continue;
+    const ts = Date.parse(entry.lastmod);
+    if (Number.isNaN(ts)) continue;
+    if (now.getTime() - ts > STALE_THRESHOLD_MS) staleCount++;
+  }
+  if (staleCount === 0) return [];
+  return [{
+    code: "SITEMAP_LASTMOD_STALE",
+    severity: "low",
+    message: `${staleCount} URL(s) in the sitemap have a lastmod older than 12 months — search engines may treat them as low-priority.`,
+    recommendation: "Refresh lastmod values for URLs whose content has changed, or remove URLs that are no longer relevant.",
+  }];
+}
