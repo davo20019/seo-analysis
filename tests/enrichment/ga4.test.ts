@@ -352,6 +352,27 @@ describe("Ga4EnrichmentSource Admin-API auto-resolve", () => {
     expect(calls).toBe(2); // initial + one retry
   });
 
+  it("maps 401 to a service-account-key validity hint", async () => {
+    const mockFetch: typeof fetch = async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.startsWith("https://oauth2.googleapis.com/token")) {
+        return jsonResponse({ access_token: "fake-token", expires_in: 3600 });
+      }
+      if (url.includes(":runReport")) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+    const source = new Ga4EnrichmentSource({
+      property: "properties/999",
+      auth: new GoogleServiceAccountAuth({ json: testServiceAccountJson() }, mockFetch),
+      fetcher: mockFetch,
+    });
+    await expect(source.fetch("https://example.com", "https://example.com/")).rejects.toThrow(
+      /service-account key|OAuth2/i,
+    );
+  });
+
   it("canonicalizes URLs the same way GSC does (utm-stripping, case)", async () => {
     const mockFetch: typeof fetch = async (input) => {
       const url = typeof input === "string" ? input : input.toString();
@@ -450,5 +471,3 @@ GIo4qkjJzc2mt1xR6LYKZ4DbKWE6kgRkoWIzUH8CgYEAlqMXBxjKkmcqe4o6ZBIy
 1SUTV0PMDXIoaF0XF8s2r7VtQc/lIA5QlW7uxa2dt+FIyP30jRVybSI2+mmGsnNF
 2OoZ8VrwR2hb2k8YCbMmGtA=
 -----END PRIVATE KEY-----`;
-
-export { makePage, testServiceAccountJson };
