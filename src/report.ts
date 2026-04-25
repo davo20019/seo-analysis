@@ -1,4 +1,4 @@
-import type { SiteReport, Issue, Severity } from "./types.js";
+import type { AgentReadinessReport, SiteReport, Issue, Severity } from "./types.js";
 import { chromium } from "playwright";
 
 export function escapeHtml(str: string): string {
@@ -76,8 +76,69 @@ ${renderPages(report)}
 
 <h2>Infrastructure</h2>
 ${renderInfrastructure(report)}
+${report.agentReadiness ? `\n<h2>Agent Readiness</h2>\n${renderAgentReadiness(report.agentReadiness)}` : ""}
 </body>
 </html>`;
+}
+
+function renderAgentReadiness(readiness: AgentReadinessReport): string {
+  const subscores = readiness.subscores;
+  const summary = `<div class="grid">
+<div class="card"><div class="label">Overall</div><div class="value">${readiness.score}</div></div>
+<div class="card"><div class="label">Discoverability</div><div class="value">${subscores.discoverability}</div></div>
+<div class="card"><div class="label">Content Access</div><div class="value">${subscores.contentAccessibility}</div></div>
+<div class="card"><div class="label">Bot Access</div><div class="value">${subscores.botAccessControl}</div></div>
+<div class="card"><div class="label">Capabilities</div><div class="value">${subscores.capabilities}</div></div>
+</div>`;
+
+  const botRows = readiness.botAccessControl.aiBots
+    .map((b) => `<tr><td><code>${escapeHtml(b.userAgent)}</code></td><td>${b.status}</td></tr>`)
+    .join("");
+  const botTable = `<h3>AI bot policy (robots.txt)</h3>
+<table><thead><tr><th>User-agent</th><th>Status</th></tr></thead><tbody>${botRows}</tbody></table>`;
+
+  const signals = readiness.botAccessControl.contentSignals;
+  const contentSignalsBlock = `<p class="muted">Content signals: search=${signals.search} · ai-train=${signals.aiTrain} · ai-input=${signals.aiInput}</p>`;
+
+  const llms = readiness.contentAccessibility;
+  const llmsBlock = `<h3>Content accessibility</h3>
+<ul>
+<li>llms.txt: ${llms.llmsTxtPresent ? "present" : "missing"}${
+    llms.llmsTxtAnalysis
+      ? ` (${llms.llmsTxtAnalysis.byteSize}B, ${llms.llmsTxtAnalysis.sectionCount} section(s), ${llms.llmsTxtAnalysis.linkCount} link(s), H1: ${llms.llmsTxtAnalysis.hasH1 ? "yes" : "no"})`
+      : ""
+  }</li>
+<li>llms-full.txt: ${llms.llmsFullTxtPresent ? "present" : "missing"}</li>
+<li>markdown content negotiation: ${llms.markdownNegotiationSupported ? "supported" : "not advertised"}</li>
+</ul>`;
+
+  const probeRows = readiness.capabilities.probes
+    .map(
+      (p) => `<tr><td><code>${escapeHtml(p.name)}</code></td><td><code>${escapeHtml(p.url)}</code></td><td>${p.present ? "present" : "absent"}</td><td>${p.status ?? "—"}</td></tr>`,
+    )
+    .join("");
+  const probesBlock = `<h3>Well-known endpoints</h3>
+<table><thead><tr><th>Name</th><th>URL</th><th>Status</th><th>HTTP</th></tr></thead><tbody>${probeRows}</tbody></table>
+<p class="muted">Web Bot Auth directory: ${readiness.botAccessControl.webBotAuthAdvertised ? "advertised" : "not advertised"}</p>`;
+
+  const cov = readiness.capabilities.schemaCoverage;
+  const schemaBlock = `<h3>Schema coverage</h3>
+<ul>
+<li>Homepage Organization/WebSite schema: ${cov.homepageHasOrgOrWebsite ? "yes" : "no"}</li>
+<li>Article-like pages with schema: ${cov.articleLikePagesWithSchema}/${cov.articleLikePages}</li>
+</ul>`;
+
+  const issuesBlock =
+    readiness.issues.length === 0
+      ? `<p class="muted">No agent-readiness issues.</p>`
+      : `<h3>Agent readiness issues</h3>
+<table><thead><tr><th>Severity</th><th>Code</th><th>Message</th></tr></thead><tbody>${readiness.issues
+          .map(
+            (i) => `<tr><td><span class="badge ${i.severity}">${i.severity}</span></td><td><code>${escapeHtml(i.code)}</code></td><td>${escapeHtml(i.message)}</td></tr>`,
+          )
+          .join("")}</tbody></table>`;
+
+  return `${summary}\n${botTable}\n${contentSignalsBlock}\n${llmsBlock}\n${probesBlock}\n${schemaBlock}\n${issuesBlock}`;
 }
 
 function renderTopIssuesTable(top: Array<{ code: string; count: number }>): string {

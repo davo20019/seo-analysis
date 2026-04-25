@@ -58,6 +58,7 @@ Pick based on client demand:
 - **E-E-A-T signals** — author bylines, about/contact pages, citation density.
 - **International SEO** — currency/language consistency, geo-targeting validation beyond hreflang.
 - **Local SEO** — NAP consistency, LocalBusiness schema completeness.
+- **Agent readiness (shipped, opt-in)** — `--agent-readiness` flag scoring four buckets (discoverability, content accessibility, bot access control, capabilities). Inspired by [Cloudflare's agent-readiness framework](https://blog.cloudflare.com/agent-readiness/). Probes AI-bot rules, llms.txt depth, `llms-full.txt`, markdown content negotiation, `Content-Signal` directives, Web Bot Auth, and well-known endpoints (`agent-skills`, `api-catalog`, `mcp/server-card`, OAuth discovery). Track follow-ups: deeper `llms.txt` validation, commerce-protocol probes (x402, UCP, ACP) once they stabilize.
 
 Effort: open-ended; treat as a menu, not a sequence.
 

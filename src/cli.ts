@@ -2,9 +2,17 @@ import { readFile, writeFile } from "node:fs/promises";
 
 import { analyzeSite } from "./analyzer.js";
 import { scanDirectory } from "./directory-scanner.js";
-import type { DuplicateGroup, KeywordSummary, LighthouseReport, SiteReport, TermFrequency } from "./types.js";
+import type {
+  AgentReadinessReport,
+  DuplicateGroup,
+  KeywordSummary,
+  LighthouseReport,
+  SiteReport,
+  TermFrequency
+} from "./types.js";
 
 interface CliOptions {
+  agentReadiness: boolean;
   concurrency: number | null;
   crux: boolean;
   excludePathPatterns: string[];
@@ -58,6 +66,7 @@ Options:
   --lighthouse               Run optional Lighthouse audits on a small set of crawled pages
   --lighthouse-pages <n>     Number of crawled pages to send through Lighthouse. Default: 1
   --crux                     Query Google's CrUX API for real-user Core Web Vitals (requires CRUX_API_KEY env var)
+  --agent-readiness          Score how prepared the site is for AI agent crawlers (llms.txt depth, AI-bot rules, well-known endpoints)
   --render                   Render pages with headless Chromium (Playwright) instead of raw fetch — needed for SPAs and JS-challenge sites
   --render-timeout-ms <n>    Timeout per page render in milliseconds (default: 30000)
   --keyword <term>          Search for this keyword in crawled pages (repeatable)
@@ -119,6 +128,7 @@ function validatePatterns(patterns: string[], flag: string): void {
 
 function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
+    agentReadiness: false,
     concurrency: null,
     crux: false,
     excludePathPatterns: [],
@@ -218,6 +228,11 @@ function parseArgs(argv: string[]): CliOptions {
 
     if (arg === "--crux") {
       options.crux = true;
+      continue;
+    }
+
+    if (arg === "--agent-readiness") {
+      options.agentReadiness = true;
       continue;
     }
 
@@ -595,6 +610,76 @@ function formatKeywordSummary(summary: KeywordSummary[]): string[] {
   return lines;
 }
 
+function formatAgentReadiness(readiness: AgentReadinessReport): string[] {
+  const lines = [
+    "",
+    `Agent Readiness: score=${readiness.score}/100 (discoverability=${readiness.subscores.discoverability} content=${readiness.subscores.contentAccessibility} bot_access=${readiness.subscores.botAccessControl} capabilities=${readiness.subscores.capabilities})`
+  ];
+
+  const explicitBots = readiness.botAccessControl.aiBots.filter((b) => b.status !== "unspecified");
+  if (explicitBots.length === 0) {
+    lines.push("  AI bot policy: no explicit rules for known agents");
+  } else {
+    lines.push(
+      `  AI bot policy: ${explicitBots
+        .map((b) => `${b.userAgent}=${b.status}`)
+        .join(", ")}`
+    );
+  }
+
+  const signals = readiness.botAccessControl.contentSignals;
+  if (
+    signals.search !== "unspecified" ||
+    signals.aiTrain !== "unspecified" ||
+    signals.aiInput !== "unspecified"
+  ) {
+    lines.push(
+      `  Content signals: search=${signals.search} ai-train=${signals.aiTrain} ai-input=${signals.aiInput}`
+    );
+  }
+
+  if (readiness.contentAccessibility.llmsTxtPresent) {
+    const a = readiness.contentAccessibility.llmsTxtAnalysis;
+    if (a) {
+      lines.push(
+        `  llms.txt: ${a.byteSize}B sections=${a.sectionCount} links=${a.linkCount} h1=${a.hasH1 ? "yes" : "no"}`
+      );
+    }
+  } else {
+    lines.push("  llms.txt: missing");
+  }
+
+  lines.push(
+    `  llms-full.txt: ${readiness.contentAccessibility.llmsFullTxtPresent ? "present" : "missing"}`
+  );
+  lines.push(
+    `  markdown content negotiation: ${readiness.contentAccessibility.markdownNegotiationSupported ? "supported" : "not advertised"}`
+  );
+  lines.push(
+    `  Web Bot Auth directory: ${readiness.botAccessControl.webBotAuthAdvertised ? "advertised" : "not advertised"}`
+  );
+
+  const presentProbes = readiness.capabilities.probes.filter((p) => p.present);
+  lines.push(
+    `  well-known endpoints: ${presentProbes.length}/${readiness.capabilities.probes.length}` +
+      (presentProbes.length > 0 ? ` (${presentProbes.map((p) => p.name).join(", ")})` : "")
+  );
+
+  const cov = readiness.capabilities.schemaCoverage;
+  lines.push(
+    `  homepage Org/WebSite schema: ${cov.homepageHasOrgOrWebsite ? "yes" : "no"}; article schema: ${cov.articleLikePagesWithSchema}/${cov.articleLikePages}`
+  );
+
+  if (readiness.issues.length > 0) {
+    lines.push("  Agent readiness issues:");
+    for (const issue of readiness.issues) {
+      lines.push(`  - ${issue.code}: ${issue.message}`);
+    }
+  }
+
+  return lines;
+}
+
 function formatTopTerms(terms: TermFrequency[]): string[] {
   if (terms.length === 0) {
     return [];
@@ -673,6 +758,10 @@ function formatTextReport(report: SiteReport): string {
   if (report.infrastructure.issues.length > 0) {
     lines.push("", "Infrastructure issues:");
     lines.push(...report.infrastructure.issues.map((issue) => `- ${issue.code}: ${issue.message}`));
+  }
+
+  if (report.agentReadiness) {
+    lines.push(...formatAgentReadiness(report.agentReadiness));
   }
 
   if (report.keywordSummary) {
@@ -754,6 +843,7 @@ async function main(): Promise<void> {
             maxPages: options.maxPages,
             crux: options.crux,
             ...(process.env.CRUX_API_KEY ? { cruxApiKey: process.env.CRUX_API_KEY } : {}),
+            agentReadiness: options.agentReadiness,
             render: options.render,
             ...(options.renderTimeoutMs ? { renderTimeoutMs: options.renderTimeoutMs } : {}),
             retries: options.retries,

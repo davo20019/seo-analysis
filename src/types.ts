@@ -170,6 +170,74 @@ export interface SiteSummary {
   duplicateMetaDescriptions: DuplicateGroup[];
 }
 
+export type AgentBotPolicyStatus = "allowed" | "blocked" | "unspecified";
+
+export interface AgentBotPolicy {
+  userAgent: string;
+  status: AgentBotPolicyStatus;
+  matchedRule?: string;
+}
+
+export type AgentContentSignalValue = "yes" | "no" | "unspecified";
+
+export interface AgentContentSignals {
+  search: AgentContentSignalValue;
+  aiTrain: AgentContentSignalValue;
+  aiInput: AgentContentSignalValue;
+}
+
+export interface AgentLlmsTxtAnalysis {
+  hasH1: boolean;
+  sectionCount: number;
+  linkCount: number;
+  byteSize: number;
+}
+
+export interface AgentSchemaCoverage {
+  homepageHasOrgOrWebsite: boolean;
+  articleLikePages: number;
+  articleLikePagesWithSchema: number;
+}
+
+export interface AgentWellKnownProbe {
+  name: string;
+  url: string;
+  present: boolean;
+  status: number | null;
+}
+
+export interface AgentReadinessReport {
+  score: number;
+  subscores: {
+    discoverability: number;
+    contentAccessibility: number;
+    botAccessControl: number;
+    capabilities: number;
+  };
+  discoverability: {
+    robotsTxtPresent: boolean;
+    sitemapPresent: boolean;
+    linkHeaderPresent: boolean;
+    linkHeaderRels: string[];
+  };
+  contentAccessibility: {
+    llmsTxtPresent: boolean;
+    llmsTxtAnalysis: AgentLlmsTxtAnalysis | null;
+    llmsFullTxtPresent: boolean;
+    markdownNegotiationSupported: boolean;
+  };
+  botAccessControl: {
+    aiBots: AgentBotPolicy[];
+    contentSignals: AgentContentSignals;
+    webBotAuthAdvertised: boolean;
+  };
+  capabilities: {
+    probes: AgentWellKnownProbe[];
+    schemaCoverage: AgentSchemaCoverage;
+  };
+  issues: Issue[];
+}
+
 export interface SiteReport {
   startUrl: string;
   infrastructure: InfrastructureReport;
@@ -178,6 +246,7 @@ export interface SiteReport {
   lighthouse: LighthouseReport[];
   keywordSummary?: KeywordSummary[];
   topTerms?: TermFrequency[];
+  agentReadiness?: AgentReadinessReport;
 }
 
 export interface AnalyzeOptions {
@@ -200,4 +269,5 @@ export interface AnalyzeOptions {
   renderTimeoutMs?: number;
   crux?: boolean;
   cruxApiKey?: string;
+  agentReadiness?: boolean;
 }

@@ -15,6 +15,14 @@ import {
   checkUrlAgainstRobots,
   type RobotsRules,
 } from "./checks/robots-checks.js";
+import {
+  buildAgentReadinessReport,
+  probeLinkHeader,
+  probeMarkdownNegotiation,
+  probeWebBotAuth,
+  probeWellKnownEndpoints,
+  type ProbeFetcher,
+} from "./checks/agent-readiness-checks.js";
 import { checkJsonLdValidation } from "./checks/schema-checks.js";
 import { queryCrux, checkCruxMetrics } from "./crux.js";
 import {
@@ -112,6 +120,8 @@ interface PathFilters {
 interface InspectInfrastructureResult {
   crawlSeeds: string[];
   report: InfrastructureReport;
+  robotsText: string | null;
+  llmsText: string | null;
 }
 
 interface CollectSitemapSeedsResult {
@@ -872,6 +882,9 @@ async function inspectInfrastructure(
     isEmpty: false
   };
 
+  let robotsText: string | null = null;
+  let llmsText: string | null = null;
+
   const [robotsResult, sitemapResult, llmsTxtResult] = await Promise.allSettled([
     fetchTextWithRetry(robotsUrl, options),
     fetchTextWithRetry(sitemapUrl, options),
@@ -883,6 +896,7 @@ async function inspectInfrastructure(
 
     if (robotsResult.value.status >= 200 && robotsResult.value.status < 300) {
       robotsTxt.present = true;
+      robotsText = robotsResult.value.text;
       const parsed = parseRobotsTxt(robotsResult.value.text);
       robotsTxt.sitemaps = parsed.sitemaps;
       robotsTxt.blocksAllCrawlers = parsed.blocksAllCrawlers;
@@ -996,6 +1010,7 @@ async function inspectInfrastructure(
 
     if (llmsTxtResult.value.status >= 200 && llmsTxtResult.value.status < 300) {
       llmsTxt.present = true;
+      llmsText = llmsTxtResult.value.text;
       llmsTxt.isEmpty = llmsTxtResult.value.text.trim().length === 0;
 
       if (llmsTxt.isEmpty) {
@@ -1049,7 +1064,9 @@ async function inspectInfrastructure(
       sitemap,
       llmsTxt,
       issues
-    }
+    },
+    robotsText,
+    llmsText
   };
 }
 
@@ -2087,6 +2104,81 @@ function applySitemapAndLinkArchitectureIssues(
   }
 }
 
+async function probeFetch(
+  url: string,
+  init: { method?: "GET" | "HEAD"; headers?: Record<string, string> },
+  options: FetchOptions
+): Promise<{ status: number; headers: Record<string, string>; text: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: init.method ?? "GET",
+      redirect: "follow",
+      headers: {
+        "user-agent": options.userAgent,
+        ...(init.headers ?? {})
+      },
+      signal: controller.signal
+    });
+    const text = init.method === "HEAD" ? "" : await response.text();
+    return {
+      status: response.status,
+      headers: extractHeaderMap(response.headers),
+      text
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function runAgentReadiness(args: {
+  startUrl: string;
+  pages: PageReport[];
+  infrastructure: InfrastructureReport;
+  robotsText: string | null;
+  llmsText: string | null;
+  fetchOptions: FetchOptions;
+}): Promise<import("./types.js").AgentReadinessReport> {
+  const origin = new URL(args.startUrl).origin;
+  const llmsFullTxtUrl = `${origin}/llms-full.txt`;
+  const fetcher: ProbeFetcher = (url, init) => probeFetch(url, init ?? {}, args.fetchOptions);
+
+  const [
+    llmsFullResult,
+    wellKnownProbes,
+    webBotAuthAdvertised,
+    markdownNegotiationSupported,
+    linkHeader
+  ] = await Promise.all([
+    probeFetch(llmsFullTxtUrl, { method: "GET" }, args.fetchOptions).catch(() => null),
+    probeWellKnownEndpoints(origin, fetcher),
+    probeWebBotAuth(origin, fetcher),
+    probeMarkdownNegotiation(args.startUrl, fetcher),
+    probeLinkHeader(args.startUrl, fetcher)
+  ]);
+
+  const llmsFullTxtPresent =
+    !!llmsFullResult && llmsFullResult.status >= 200 && llmsFullResult.status < 300;
+
+  return buildAgentReadinessReport({
+    startUrl: args.startUrl,
+    pages: args.pages,
+    robotsTxtPresent: args.infrastructure.robotsTxt.present,
+    robotsText: args.robotsText ?? "",
+    robotsRules: args.infrastructure.robotsTxt.rules ?? {},
+    sitemapPresent: args.infrastructure.sitemap.present,
+    llmsTxtPresent: args.infrastructure.llmsTxt.present,
+    llmsText: args.llmsText,
+    llmsFullTxtPresent,
+    markdownNegotiationSupported,
+    linkHeaderPresent: linkHeader.present,
+    linkHeaderRels: linkHeader.rels,
+    webBotAuthAdvertised,
+    wellKnownProbes
+  });
+}
+
 function buildSummary(
   pages: PageReport[],
   infrastructure: InfrastructureReport,
@@ -2448,6 +2540,18 @@ export async function analyzeSite(
   const keywordSummary = keywords.length > 0 ? buildKeywordSummary(keywords, pages) : undefined;
   const topTerms = extractTermsEnabled ? extractTermFrequencies(pages, topTermsCount) : undefined;
 
+  let agentReadiness;
+  if (rawOptions.agentReadiness) {
+    agentReadiness = await runAgentReadiness({
+      startUrl: normalizedStartUrl,
+      pages,
+      infrastructure: infrastructureResult.report,
+      robotsText: infrastructureResult.robotsText,
+      llmsText: infrastructureResult.llmsText,
+      fetchOptions
+    });
+  }
+
   return {
     startUrl: normalizedStartUrl,
     infrastructure: infrastructureResult.report,
@@ -2460,7 +2564,8 @@ export async function analyzeSite(
     pages,
     lighthouse,
     keywordSummary,
-    topTerms
+    topTerms,
+    ...(agentReadiness ? { agentReadiness } : {})
   };
   } finally {
     if (renderBrowser) {

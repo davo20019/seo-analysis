@@ -44,6 +44,7 @@ It focuses on technical SEO issues that can be derived from the crawl itself, wi
 - nested sitemap-index resolution (walks one level of nested sitemaps, capped at 50 children)
 - sitemap entries with `lastmod` older than 12 months
 - real-user Core Web Vitals from Google CrUX (LCP/INP/CLS p75) when `--crux` is enabled and `CRUX_API_KEY` is set
+- optional AI-agent readiness scoring (`--agent-readiness`) covering AI-bot rules, llms.txt depth, `llms-full.txt`, markdown content negotiation, well-known endpoints (`agent-skills`, `api-catalog`, `mcp/server-card`, OAuth discovery), Web Bot Auth, and `Link:` headers
 
 ## Install
 
@@ -137,6 +138,20 @@ CRUX_API_KEY=your-google-api-key npm run dev -- https://example.com --crux --max
 ```
 
 ```bash
+# Score the site for AI-agent readiness (llms.txt depth, AI-bot policy, well-known endpoints)
+npm run dev -- https://example.com --agent-readiness --max-pages 25
+```
+
+The `--agent-readiness` flag adds an opinionated rubric (inspired by [Cloudflare's agent-readiness framework](https://blog.cloudflare.com/agent-readiness/)) covering four buckets:
+
+- **Discoverability** — robots.txt, sitemap.xml, `Link:` HTTP headers (RFC 8288).
+- **Content accessibility** — llms.txt presence and content depth (H1, sections, links, size), `llms-full.txt`, and markdown content negotiation (`Accept: text/markdown`).
+- **Bot access control** — explicit rules for known AI user agents (GPTBot, ClaudeBot, PerplexityBot, Google-Extended, CCBot, Bytespider, Applebot-Extended, …), `Content-Signal` directives (`search`, `ai-train`, `ai-input`), and Web Bot Auth (`/.well-known/http-message-signatures-directory`).
+- **Capabilities & protocols** — well-known endpoints (`/.well-known/agent-skills/index.json`, `/.well-known/api-catalog`, `/.well-known/mcp/server-card.json`, OAuth discovery) plus structured-data coverage from an agent perspective (Organization/WebSite on the homepage, Article schema on article-like paths).
+
+Each bucket is scored 0–100 and averaged into a single `score` (also 0–100). The full breakdown — including which probes succeeded — lands in the JSON, text, and HTML reports as a separate `Agent Readiness` section.
+
+```bash
 # Generate a polished HTML report (open in any browser, email to a client)
 npm run dev -- https://example.com --max-pages 25 --html-report report.html
 
@@ -201,6 +216,7 @@ jobs:
 | `fail-on` | (none) | Fail the workflow if issues at this severity exist (`high`, `medium`, `low`) |
 | `crux` | `false` | Query Google CrUX for real-user Core Web Vitals |
 | `crux-api-key` | (none) | API key for CrUX (use a repo secret) |
+| `agent-readiness` | `false` | Score AI-agent readiness (llms.txt depth, AI-bot rules, well-known endpoints) |
 | `user-agent` | (default) | Override the crawler's User-Agent |
 | `include-paths` | (none) | Comma-separated regex; only crawl matching URLs |
 | `exclude-paths` | (none) | Comma-separated regex; skip matching URLs |
