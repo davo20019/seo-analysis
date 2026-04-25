@@ -1,0 +1,181 @@
+name: "SEO Audit"
+description: "Crawl-based SEO audit (technical, schema, sitemap, CrUX, JS rendering). Fails CI on regressions."
+branding:
+  icon: "search"
+  color: "purple"
+
+inputs:
+  url:
+    description: "URL to crawl (required)."
+    required: true
+  max-pages:
+    description: "Maximum pages to crawl. Default 50."
+    required: false
+    default: "50"
+  concurrency:
+    description: "Number of pages fetched in parallel. Default uses the CLI default (6)."
+    required: false
+    default: ""
+  render:
+    description: "Render pages with headless Chromium (true|false). Default false."
+    required: false
+    default: "false"
+  fail-on:
+    description: "Exit non-zero if issues at this severity exist after the audit. One of: high, medium, low. Empty = never fail."
+    required: false
+    default: ""
+  crux:
+    description: "Query Google CrUX API for real-user Core Web Vitals (true|false). Requires crux-api-key."
+    required: false
+    default: "false"
+  crux-api-key:
+    description: "Google API key for CrUX. Use a repo secret."
+    required: false
+    default: ""
+  user-agent:
+    description: "Override the User-Agent header sent by the crawler."
+    required: false
+    default: ""
+  include-paths:
+    description: "Comma-separated regex patterns; only crawl URLs matching at least one."
+    required: false
+    default: ""
+  exclude-paths:
+    description: "Comma-separated regex patterns; skip URLs matching any."
+    required: false
+    default: ""
+  output-json:
+    description: "Path to write the JSON report. Default seo-report.json."
+    required: false
+    default: "seo-report.json"
+  output-html:
+    description: "Optional path to write an HTML report."
+    required: false
+    default: ""
+
+outputs:
+  high-issues:
+    description: "Total high-severity issues across all pages."
+    value: ${{ steps.parse.outputs.high }}
+  medium-issues:
+    description: "Total medium-severity issues across all pages."
+    value: ${{ steps.parse.outputs.medium }}
+  low-issues:
+    description: "Total low-severity issues across all pages."
+    value: ${{ steps.parse.outputs.low }}
+  pages-crawled:
+    description: "Number of pages successfully crawled."
+    value: ${{ steps.parse.outputs.pages }}
+  report-path:
+    description: "Path to the JSON report (relative to the consumer's workspace)."
+    value: ${{ steps.run.outputs.report-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: Install action dependencies
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: npm ci || npm install
+
+    - name: Build CLI
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: npm run build
+
+    - name: Run audit
+      id: run
+      shell: bash
+      env:
+        SEO_INPUT_URL: ${{ inputs.url }}
+        SEO_INPUT_MAX_PAGES: ${{ inputs.max-pages }}
+        SEO_INPUT_CONCURRENCY: ${{ inputs.concurrency }}
+        SEO_INPUT_RENDER: ${{ inputs.render }}
+        SEO_INPUT_CRUX: ${{ inputs.crux }}
+        SEO_INPUT_USER_AGENT: ${{ inputs.user-agent }}
+        SEO_INPUT_INCLUDE_PATHS: ${{ inputs.include-paths }}
+        SEO_INPUT_EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
+        SEO_INPUT_OUTPUT_JSON: ${{ inputs.output-json }}
+        SEO_INPUT_OUTPUT_HTML: ${{ inputs.output-html }}
+        CRUX_API_KEY: ${{ inputs.crux-api-key }}
+      run: |
+        set -euo pipefail
+        ARGS=("$SEO_INPUT_URL" "--json" "--output" "$SEO_INPUT_OUTPUT_JSON")
+
+        if [ -n "$SEO_INPUT_MAX_PAGES" ]; then
+          ARGS+=("--max-pages" "$SEO_INPUT_MAX_PAGES")
+        fi
+        if [ -n "$SEO_INPUT_CONCURRENCY" ]; then
+          ARGS+=("--concurrency" "$SEO_INPUT_CONCURRENCY")
+        fi
+        if [ "$SEO_INPUT_RENDER" = "true" ]; then
+          ARGS+=("--render")
+        fi
+        if [ "$SEO_INPUT_CRUX" = "true" ]; then
+          ARGS+=("--crux")
+        fi
+        if [ -n "$SEO_INPUT_USER_AGENT" ]; then
+          ARGS+=("--user-agent" "$SEO_INPUT_USER_AGENT")
+        fi
+        if [ -n "$SEO_INPUT_OUTPUT_HTML" ]; then
+          ARGS+=("--html-report" "$SEO_INPUT_OUTPUT_HTML")
+        fi
+
+        IFS=',' read -ra INCLUDES <<< "$SEO_INPUT_INCLUDE_PATHS"
+        for p in "${INCLUDES[@]}"; do
+          if [ -n "$p" ]; then ARGS+=("--include-path" "$p"); fi
+        done
+
+        IFS=',' read -ra EXCLUDES <<< "$SEO_INPUT_EXCLUDE_PATHS"
+        for p in "${EXCLUDES[@]}"; do
+          if [ -n "$p" ]; then ARGS+=("--exclude-path" "$p"); fi
+        done
+
+        node "${{ github.action_path }}/dist/cli.js" "${ARGS[@]}"
+        echo "report-path=$SEO_INPUT_OUTPUT_JSON" >> "$GITHUB_OUTPUT"
+
+    - name: Parse summary
+      id: parse
+      shell: bash
+      env:
+        REPORT_PATH: ${{ inputs.output-json }}
+      run: |
+        set -euo pipefail
+        node -e "
+          const fs = require('node:fs');
+          const raw = JSON.parse(fs.readFileSync(process.env.REPORT_PATH, 'utf8'));
+          const r = Array.isArray(raw) ? raw[0] : raw;
+          const t = r.summary.issueTotals;
+          const out = process.env.GITHUB_OUTPUT;
+          fs.appendFileSync(out, 'high=' + t.high + '\n');
+          fs.appendFileSync(out, 'medium=' + t.medium + '\n');
+          fs.appendFileSync(out, 'low=' + t.low + '\n');
+          fs.appendFileSync(out, 'pages=' + r.summary.crawledPages + '\n');
+        "
+
+    - name: Apply fail-on gate
+      if: ${{ inputs.fail-on != '' }}
+      shell: bash
+      env:
+        FAIL_ON: ${{ inputs.fail-on }}
+        HIGH: ${{ steps.parse.outputs.high }}
+        MEDIUM: ${{ steps.parse.outputs.medium }}
+        LOW: ${{ steps.parse.outputs.low }}
+      run: |
+        set -euo pipefail
+        case "$FAIL_ON" in
+          high) COUNT="$HIGH" ;;
+          medium) COUNT="$MEDIUM" ;;
+          low) COUNT="$LOW" ;;
+          *) echo "Invalid fail-on: $FAIL_ON (must be high|medium|low)"; exit 2 ;;
+        esac
+        if [ "$COUNT" -gt 0 ]; then
+          echo "::error::SEO audit failed: $COUNT $FAIL_ON-severity issue(s) detected."
+          exit 1
+        fi
+        echo "fail-on $FAIL_ON: 0 issues — passing."
