@@ -41,6 +41,8 @@ It focuses on technical SEO issues that can be derived from the crawl itself, wi
 - URLs explicitly disallowed by `robots.txt` for the configured user agent
 - JSON-LD validation against rich-result requirements: Product, Article (BlogPosting/NewsArticle), FAQPage, BreadcrumbList, Organization, LocalBusiness
 - JSON-LD Product offers without `price` or `priceCurrency`
+- nested sitemap-index resolution (walks one level of nested sitemaps, capped at 50 children)
+- sitemap entries with `lastmod` older than 12 months
 
 ## Quick Start
 
