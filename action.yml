@@ -28,6 +28,10 @@ inputs:
     description: "Query Google CrUX API for real-user Core Web Vitals (true|false). Requires crux-api-key."
     required: false
     default: "false"
+  agent-readiness:
+    description: "Score AI-agent readiness: llms.txt depth, AI-bot rules, well-known endpoints (true|false)."
+    required: false
+    default: "false"
   crux-api-key:
     description: "Google API key for CrUX. Use a repo secret."
     required: false
@@ -97,6 +101,7 @@ runs:
         SEO_INPUT_CONCURRENCY: ${{ inputs.concurrency }}
         SEO_INPUT_RENDER: ${{ inputs.render }}
         SEO_INPUT_CRUX: ${{ inputs.crux }}
+        SEO_INPUT_AGENT_READINESS: ${{ inputs.agent-readiness }}
         SEO_INPUT_USER_AGENT: ${{ inputs.user-agent }}
         SEO_INPUT_INCLUDE_PATHS: ${{ inputs.include-paths }}
         SEO_INPUT_EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
@@ -118,6 +123,9 @@ runs:
         fi
         if [ "$SEO_INPUT_CRUX" = "true" ]; then
           ARGS+=("--crux")
+        fi
+        if [ "$SEO_INPUT_AGENT_READINESS" = "true" ]; then
+          ARGS+=("--agent-readiness")
         fi
         if [ -n "$SEO_INPUT_USER_AGENT" ]; then
           ARGS+=("--user-agent" "$SEO_INPUT_USER_AGENT")
