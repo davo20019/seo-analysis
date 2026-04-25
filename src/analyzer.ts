@@ -9,7 +9,13 @@ import {
   checkImageFormats,
 } from "./checks/image-checks.js";
 import { checkViewportMeta } from "./checks/mobile-checks.js";
-import { checkXRobotsTag, checkResponseHeaders } from "./checks/header-checks.js";
+import {
+  checkContentEncoding,
+  checkLinkCanonicalHeader,
+  checkResponseHeaders,
+  checkVaryAcceptEncoding,
+  checkXRobotsTag,
+} from "./checks/header-checks.js";
 import {
   parseRobotsRules,
   checkUrlAgainstRobots,
@@ -1636,6 +1642,9 @@ function analyzeHtml(
   for (const issue of checkViewportMeta($)) pushIssue(issues, issue);
   for (const issue of checkXRobotsTag(response.headers)) pushIssue(issues, issue);
   for (const issue of checkResponseHeaders(response.finalUrl, response.headers)) pushIssue(issues, issue);
+  for (const issue of checkLinkCanonicalHeader(response.headers, canonical, finalUrl)) pushIssue(issues, issue);
+  for (const issue of checkContentEncoding(response.headers, response.contentType)) pushIssue(issues, issue);
+  for (const issue of checkVaryAcceptEncoding(response.headers)) pushIssue(issues, issue);
   for (const issue of checkUrlAgainstRobots(response.finalUrl, userAgent, robotsRules)) pushIssue(issues, issue);
   for (const issue of checkJsonLdValidation(ldScripts)) pushIssue(issues, issue);
 
