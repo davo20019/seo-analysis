@@ -43,6 +43,7 @@ It focuses on technical SEO issues that can be derived from the crawl itself, wi
 - JSON-LD Product offers without `price` or `priceCurrency`
 - nested sitemap-index resolution (walks one level of nested sitemaps, capped at 50 children)
 - sitemap entries with `lastmod` older than 12 months
+- real-user Core Web Vitals from Google CrUX (LCP/INP/CLS p75) when `--crux` is enabled and `CRUX_API_KEY` is set
 
 ## Quick Start
 
@@ -97,6 +98,11 @@ Notes on `--render`:
 - First `npm install` auto-downloads Chromium (~300MB). To skip (e.g. CI), set `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` and run `npx playwright install chromium` later.
 - Rendering is slower than raw fetch (typical: 2–10s per page). Use `--max-pages` to scope.
 - Known limitation: `redirectChain` is not captured for rendered pages in v1. The `finalUrl` is still accurate.
+
+```bash
+# Query Google's CrUX API for real-user Core Web Vitals (requires CRUX_API_KEY env var)
+CRUX_API_KEY=your-google-api-key npm run dev -- https://example.com --crux --max-pages 5
+```
 
 ## Keyword Search
 
