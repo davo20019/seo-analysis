@@ -1667,16 +1667,17 @@ async function analyzePage(
   try {
     let response: FetchResult;
     if (renderBrowser) {
-      const { renderPage } = await import("./render.js");
+      const { renderPageWithRetry } = await import("./render.js");
       const context = await renderBrowser.newContext();
       try {
-        response = await renderPage(
+        response = await renderPageWithRetry(
           url,
           {
             timeoutMs: options.timeoutMs ?? 30000,
             userAgent: options.userAgent ?? DEFAULT_USER_AGENT,
           },
           context,
+          options.retries ?? 0,
         );
       } finally {
         await context.close();
