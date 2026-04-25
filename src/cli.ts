@@ -30,10 +30,17 @@ interface CliOptions {
   timeoutMs: number;
   urls: string[];
   userAgent: string | null;
+  diffMode: boolean;
+  diffOldPath: string | null;
+  diffNewPath: string | null;
+  failOnSeverity: "high" | "medium" | "low" | null;
 }
 
 function printHelp(): void {
   console.log(`SEO Analysis CLI
+
+Subcommands:
+  diff <old.json> <new.json>  Compare two report JSON files
 
 Usage:
   npm run dev -- <url> [more-urls] [options]
@@ -60,6 +67,7 @@ Options:
   --from-directory <path>   Search local HTML files instead of crawling
   --json                     Print raw JSON instead of a text report
   --output <file>            Write the final report to a file
+  --fail-on <severity>       Diff mode only: exit non-zero if issues at <severity> increased (high|medium|low)
   --html-report <file>       Write a polished HTML report to <file>
   --pdf-report <file>        Write a PDF report to <file> (uses Playwright/Chromium)
   --user-agent <string>      Override the HTTP User-Agent sent by the crawler
@@ -135,8 +143,50 @@ function parseArgs(argv: string[]): CliOptions {
     seedSitemap: true,
     timeoutMs: 10_000,
     urls: [],
-    userAgent: null
+    userAgent: null,
+    diffMode: false,
+    diffOldPath: null,
+    diffNewPath: null,
+    failOnSeverity: null
   };
+
+  if (argv[0] === "diff") {
+    options.diffMode = true;
+    options.diffOldPath = argv[1] ?? null;
+    options.diffNewPath = argv[2] ?? null;
+
+    for (let index = 3; index < argv.length; index += 1) {
+      const arg = argv[index];
+      if (arg === "--json") { options.json = true; continue; }
+      if (arg === "--output") {
+        options.outputPath = requireValue(argv, index, "--output");
+        index += 1; continue;
+      }
+      if (arg.startsWith("--output=")) { options.outputPath = arg.split("=").slice(1).join("="); continue; }
+      if (arg === "--fail-on") {
+        const v = requireValue(argv, index, "--fail-on");
+        if (v !== "high" && v !== "medium" && v !== "low") {
+          throw new Error("--fail-on must be high|medium|low");
+        }
+        options.failOnSeverity = v;
+        index += 1; continue;
+      }
+      if (arg.startsWith("--fail-on=")) {
+        const v = arg.split("=").slice(1).join("=");
+        if (v !== "high" && v !== "medium" && v !== "low") {
+          throw new Error("--fail-on must be high|medium|low");
+        }
+        options.failOnSeverity = v as "high" | "medium" | "low";
+        continue;
+      }
+      if (arg === "--help" || arg === "-h") {
+        printHelp();
+        process.exit(0);
+      }
+      throw new Error(`Unknown option in diff mode: ${arg}`);
+    }
+    return options;
+  }
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -647,6 +697,37 @@ async function maybeWriteOutput(outputPath: string | null, contents: string): Pr
 async function main(): Promise<void> {
   try {
     const options = parseArgs(process.argv.slice(2));
+
+    if (options.diffMode) {
+      if (!options.diffOldPath || !options.diffNewPath) {
+        throw new Error("diff requires two arguments: <old.json> <new.json>");
+      }
+      const [oldRaw, newRaw] = await Promise.all([
+        readFile(options.diffOldPath, "utf8"),
+        readFile(options.diffNewPath, "utf8"),
+      ]);
+      const oldParsed = JSON.parse(oldRaw);
+      const newParsed = JSON.parse(newRaw);
+      const oldReport = Array.isArray(oldParsed) ? oldParsed[0] : oldParsed;
+      const newReport = Array.isArray(newParsed) ? newParsed[0] : newParsed;
+      const { diffSiteReports, renderDiffText, renderDiffJson } = await import("./diff.js");
+      const diff = diffSiteReports(oldReport, newReport);
+      const out = options.json ? renderDiffJson(diff) : renderDiffText(diff);
+      if (options.outputPath) {
+        await writeFile(options.outputPath, out, "utf8");
+      } else {
+        console.log(out);
+      }
+      if (options.failOnSeverity) {
+        const delta = diff.severityDelta[options.failOnSeverity];
+        if (delta > 0) {
+          console.error(`fail-on: ${options.failOnSeverity} severity increased by ${delta}`);
+          process.exit(1);
+        }
+      }
+      return;
+    }
+
     const keywords = await loadKeywords(options.keywords, options.keywordFile);
     const reports: SiteReport[] = [];
 
