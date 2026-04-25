@@ -1,15 +1,59 @@
 {
-  "name": "seo-analysis",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@davo20019/seo-audit",
+  "version": "0.2.0",
   "type": "module",
-  "description": "A crawl-based SEO analysis CLI for auditing websites.",
+  "description": "Crawl-based SEO audit CLI with JS rendering, JSON-LD validation, CrUX field data, sitemap walking, HTML/PDF reports, and crawl diffing.",
+  "license": "MIT",
+  "author": "David Loor",
+  "homepage": "https://github.com/davo20019/seo-analysis#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/davo20019/seo-analysis.git"
+  },
+  "bugs": {
+    "url": "https://github.com/davo20019/seo-analysis/issues"
+  },
+  "keywords": [
+    "seo",
+    "audit",
+    "crawler",
+    "lighthouse",
+    "schema",
+    "json-ld",
+    "core-web-vitals",
+    "crux",
+    "sitemap",
+    "playwright",
+    "headless",
+    "cli",
+    "open-source"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "seo-audit": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "tsx src/cli.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/prepare-cli.cjs",
     "start": "node dist/cli.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "npm test && npm run build"
   },
   "dependencies": {
     "cheerio": "^1.2.0",

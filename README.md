@@ -45,9 +45,37 @@ It focuses on technical SEO issues that can be derived from the crawl itself, wi
 - sitemap entries with `lastmod` older than 12 months
 - real-user Core Web Vitals from Google CrUX (LCP/INP/CLS p75) when `--crux` is enabled and `CRUX_API_KEY` is set
 
-## Quick Start
+## Install
+
+Run instantly with `npx` (no install needed):
 
 ```bash
+npx @davo20019/seo-audit https://example.com
+```
+
+Install globally:
+
+```bash
+npm install -g @davo20019/seo-audit
+seo-audit https://example.com --max-pages 25
+```
+
+Add to a project (use as a library too):
+
+```bash
+npm install @davo20019/seo-audit
+```
+
+```ts
+import { analyzeSite } from "@davo20019/seo-audit";
+const report = await analyzeSite("https://example.com", { maxPages: 50 });
+```
+
+## Quick Start (from source)
+
+```bash
+git clone https://github.com/davo20019/seo-analysis.git
+cd seo-analysis
 npm install
 npm run dev -- https://example.com
 ```
@@ -141,6 +169,54 @@ The diff highlights:
 - HTTP status changes on common pages
 - Pages added or removed from the crawl
 
+## GitHub Action
+
+Run SEO audits in CI without writing any glue code:
+
+```yaml
+# .github/workflows/seo.yml
+name: SEO Audit
+on: [pull_request]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: davo20019/seo-analysis@v1
+        with:
+          url: https://staging.mysite.com
+          max-pages: 50
+          fail-on: high   # block PRs that introduce high-severity issues
+```
+
+### Inputs
+
+| Input | Default | Description |
+|---|---|---|
+| `url` | (required) | URL to crawl |
+| `max-pages` | `50` | Maximum pages to crawl |
+| `concurrency` | (CLI default) | Pages fetched in parallel |
+| `render` | `false` | Use Playwright for JS rendering |
+| `fail-on` | (none) | Fail the workflow if issues at this severity exist (`high`, `medium`, `low`) |
+| `crux` | `false` | Query Google CrUX for real-user Core Web Vitals |
+| `crux-api-key` | (none) | API key for CrUX (use a repo secret) |
+| `user-agent` | (default) | Override the crawler's User-Agent |
+| `include-paths` | (none) | Comma-separated regex; only crawl matching URLs |
+| `exclude-paths` | (none) | Comma-separated regex; skip matching URLs |
+| `output-json` | `seo-report.json` | Where to write the JSON report |
+| `output-html` | (none) | Optional path for the HTML report |
+
+### Outputs
+
+| Output | Description |
+|---|---|
+| `high-issues` | Count of high-severity issues |
+| `medium-issues` | Count of medium-severity issues |
+| `low-issues` | Count of low-severity issues |
+| `pages-crawled` | Number of pages successfully crawled |
+| `report-path` | Path to the JSON report (use with `actions/upload-artifact`) |
+
 ## Keyword Search
 
 Search for specific keywords across a site:
@@ -188,6 +264,16 @@ npm run dev -- --from-directory ./site_backup --extract-terms
 - Sitemap reconciliation relies on the set of sitemap URLs the CLI was able to collect. The report marks sitemap coverage as partial when that set was truncated.
 - JSON-LD validation covers Google's rich-result requirements for Product, Article (BlogPosting/NewsArticle), FAQPage, BreadcrumbList, Organization, and LocalBusiness. Other schema types are still presence-only.
 - `--render` (Playwright/Chromium) handles SPAs and JS-challenge sites (Cloudflare turnstile, JS-rendered DOM) but `redirectChain` is not captured for rendered pages.
+
+## Privacy
+
+This tool does not collect telemetry. No analytics, no phone-home, no install tracking. Crawl reports stay on your machine. The only outbound network traffic is:
+
+- HTTP fetches to the URLs you ask the tool to crawl
+- Optional: Google's CrUX API when you pass `--crux` (sends an origin string + your API key)
+- Optional: Chromium downloads from Microsoft's Playwright CDN on first install
+
+If a future version ever adds opt-in telemetry, it will be exactly that — opt-in, with explicit disclosure.
 
 ## License
 
