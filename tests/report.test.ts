@@ -109,3 +109,62 @@ maybeDescribe("renderPdfReport (integration)", () => {
     expect(buf.subarray(0, 4).toString()).toBe("%PDF");
   }, 60000);
 });
+
+describe("renderHtmlReport with GA4", () => {
+  it("renders an Analytics section and a GA4 column when ga4 metrics are present", () => {
+    const report: SiteReport = {
+      startUrl: "https://example.com",
+      infrastructure: {
+        robotsTxt: { url: "", present: false, status: null, sitemaps: [], blocksAllCrawlers: false },
+        sitemap: { url: "", present: false, status: null, urlCount: 0, knownUrls: 0, coverageLimited: false, isIndex: false },
+        llmsTxt: { url: "", present: false, status: null, isEmpty: true },
+        issues: [],
+      },
+      summary: {
+        crawledPages: 1,
+        issueTotals: { high: 0, medium: 0, low: 0 },
+        pagesWithNoindex: 0, pagesMissingTitle: 0, pagesMissingDescription: 0,
+        internalLinksChecked: 0, pagesWithBrokenInternalLinks: 0,
+        pagesWithRedirectingInternalLinks: 0, pagesWithAnchorTextIssues: 0,
+        pagesWithFewIncomingInternalLinks: 0, orphanCandidatePages: 0,
+        pagesMissingFromSitemap: 0, pagesWithHreflangIssues: 0,
+        topIssues: [], duplicateTitles: [], duplicateMetaDescriptions: [],
+      },
+      pages: [
+        {
+          url: "https://example.com/a",
+          finalUrl: "https://example.com/a",
+          status: 200, contentType: "text/html",
+          redirectChain: [], discoveredLinks: [],
+          checks: {
+            title: "x", titleLength: 1, metaDescription: null, metaDescriptionLength: 0,
+            canonical: null, htmlLang: null, expectedLocale: null, hreflang: [],
+            robotsMeta: null, h1s: [], wordCount: 0, imagesTotal: 0, imagesMissingAlt: 0,
+            internalLinks: 0, incomingInternalLinks: 0,
+            internalLinksWithoutAnchorText: 0, internalLinksWithNonDescriptiveAnchorText: 0,
+            externalLinks: 0, inSitemap: false,
+            openGraph: { title: null, description: null, image: null },
+            schemaTypes: [], bodyText: null,
+          },
+          issues: [],
+          metrics: { ga4: { sessions: 10, screenPageViews: 20, totalUsers: 8, engagementRate: 0.6 } },
+        },
+      ],
+      lighthouse: [],
+      ga4: {
+        property: "properties/123",
+        startDate: "2026-01-25",
+        endDate: "2026-04-25",
+        totalRows: 1,
+        matchedPages: 1,
+        unmatchedRows: 0,
+        error: null,
+      },
+    };
+    const html = renderHtmlReport(report);
+    expect(html).toContain("<h2>Analytics</h2>");
+    expect(html).toContain("properties/123");
+    expect(html).toContain("<th>GA4</th>");
+    expect(html).toContain("10 sess");
+  });
+});

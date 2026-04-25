@@ -1,6 +1,7 @@
 import type {
   AgentReadinessReport,
   GscEnrichmentReport,
+  Ga4EnrichmentReport,
   PrioritySummaryEntry,
   SiteReport,
   Issue,
@@ -83,39 +84,58 @@ ${renderPages(report)}
 
 <h2>Infrastructure</h2>
 ${renderInfrastructure(report)}
-${report.gsc ? `\n<h2>Search Console</h2>\n${renderGscSection(report.gsc, report.summary.priorityIssues ?? [])}` : ""}
+${report.gsc ? `\n<h2>Search Console</h2>\n${renderGscSection(report.gsc)}` : ""}
+${report.ga4 ? `\n<h2>Analytics</h2>\n${renderGa4Section(report.ga4)}` : ""}
+${(report.gsc || report.ga4) && report.summary.priorityIssues && report.summary.priorityIssues.length > 0
+  ? `\n<h2>Priority issues</h2>\n${renderPriorityIssues(report.summary.priorityIssues)}`
+  : ""}
 ${report.agentReadiness ? `\n<h2>Agent Readiness</h2>\n${renderAgentReadiness(report.agentReadiness)}` : ""}
 </body>
 </html>`;
 }
 
-function renderGscSection(gsc: GscEnrichmentReport, priority: PrioritySummaryEntry[]): string {
+function renderGscSection(gsc: GscEnrichmentReport): string {
   if (gsc.error) {
     return `<p class="muted">${escapeHtml(gsc.error)}</p>`;
   }
-  const summary = `<p class="muted">Property: <code>${escapeHtml(gsc.property)}</code> · window ${escapeHtml(gsc.startDate)} – ${escapeHtml(gsc.endDate)} · rows fetched ${gsc.totalRows} · matched to crawled pages ${gsc.matchedPages} · unmatched ${gsc.unmatchedRows}.</p>`;
+  return `<p class="muted">Property: <code>${escapeHtml(gsc.property)}</code> · window ${escapeHtml(gsc.startDate)} – ${escapeHtml(gsc.endDate)} · rows fetched ${gsc.totalRows} · matched to crawled pages ${gsc.matchedPages} · unmatched ${gsc.unmatchedRows}.</p>`;
+}
 
-  if (priority.length === 0) {
-    return `${summary}<p class="muted">No priority issues — high/medium-severity issues didn't land on pages with measurable impressions.</p>`;
+function renderGa4Section(ga4: Ga4EnrichmentReport): string {
+  if (ga4.error) {
+    return `<p class="muted">${escapeHtml(ga4.error)}</p>`;
   }
+  return `<p class="muted">Property: <code>${escapeHtml(ga4.property)}</code> · window ${escapeHtml(ga4.startDate)} – ${escapeHtml(ga4.endDate)} · rows fetched ${ga4.totalRows} · matched to crawled pages ${ga4.matchedPages} · unmatched ${ga4.unmatchedRows}.</p>`;
+}
 
-  const rows = priority
-    .map(
-      (e) => `<tr>
+function renderPriorityIssues(entries: PrioritySummaryEntry[]): string {
+  const rows = entries
+    .map((e) => {
+      let metricCells: string;
+      if (e.rankedBy === "gsc") {
+        const g = e.metrics.gsc;
+        metricCells = `<td>${g?.impressions ?? 0}</td><td>${g?.clicks ?? 0}</td><td>${(g?.position ?? 0).toFixed(1)}</td>`;
+      } else {
+        const g = e.metrics.ga4;
+        metricCells = `<td>${g?.sessions ?? 0}</td><td>${g?.screenPageViews ?? 0}</td><td>${((g?.engagementRate ?? 0) * 100).toFixed(1)}%</td>`;
+      }
+      return `<tr>
 <td><span class="badge ${e.severity}">${e.severity}</span></td>
 <td><code>${escapeHtml(e.code)}</code></td>
 <td><a href="${escapeHtml(e.url)}">${escapeHtml(e.url)}</a></td>
-<td>${e.impressions}</td>
-<td>${e.clicks}</td>
-<td>${e.position.toFixed(1)}</td>
-</tr>`,
-    )
+<td><span class="badge low">via ${e.rankedBy.toUpperCase()}</span></td>
+${metricCells}
+</tr>`;
+    })
     .join("");
 
-  return `${summary}
-<h3>Priority issues</h3>
-<p class="muted">High/medium-severity issues on pages with GSC impressions, sorted by traffic.</p>
-<table><thead><tr><th>Severity</th><th>Code</th><th>URL</th><th>Impressions</th><th>Clicks</th><th>Avg position</th></tr></thead><tbody>${rows}</tbody></table>`;
+  // Mixed-source list: render two metric headers and let the badge column
+  // tell readers which row to read which way.
+  return `<p class="muted">High/medium-severity issues on pages with traffic, sorted by impressions (GSC-ranked) or sessions (GA4-ranked).</p>
+<table>
+<thead><tr><th>Severity</th><th>Code</th><th>URL</th><th>Source</th><th>Impressions / Sessions</th><th>Clicks / Pageviews</th><th>Position / Engagement</th></tr></thead>
+<tbody>${rows}</tbody>
+</table>`;
 }
 
 function renderAgentReadiness(readiness: AgentReadinessReport): string {
@@ -233,9 +253,13 @@ function renderIssueCatalog(groups: IssueGroup[]): string {
 function renderPages(report: SiteReport): string {
   if (report.pages.length === 0) return `<p class="muted">No pages crawled.</p>`;
   const showGsc = report.pages.some((p) => p.metrics?.gsc);
+  const showGa4 = report.pages.some((p) => p.metrics?.ga4);
   const rows = report.pages.map((p) => {
     const gscCell = showGsc
       ? `<td>${p.metrics?.gsc ? `${p.metrics.gsc.impressions} impr / ${p.metrics.gsc.clicks} clk / pos ${p.metrics.gsc.position.toFixed(1)}` : ""}</td>`
+      : "";
+    const ga4Cell = showGa4
+      ? `<td>${p.metrics?.ga4 ? `${p.metrics.ga4.sessions} sess / ${p.metrics.ga4.screenPageViews} pv / eng ${(p.metrics.ga4.engagementRate * 100).toFixed(1)}%` : ""}</td>`
       : "";
     return `<tr>
 <td><a href="${escapeHtml(p.finalUrl)}">${escapeHtml(p.finalUrl)}</a></td>
@@ -243,10 +267,12 @@ function renderPages(report: SiteReport): string {
 <td>${p.status}</td>
 <td>${p.issues.length}</td>
 ${gscCell}
+${ga4Cell}
 </tr>`;
   }).join("");
   const gscHead = showGsc ? "<th>GSC</th>" : "";
-  return `<table><thead><tr><th>URL</th><th>Title</th><th>Status</th><th>Issues</th>${gscHead}</tr></thead><tbody>${rows}</tbody></table>`;
+  const ga4Head = showGa4 ? "<th>GA4</th>" : "";
+  return `<table><thead><tr><th>URL</th><th>Title</th><th>Status</th><th>Issues</th>${gscHead}${ga4Head}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function renderInfrastructure(report: SiteReport): string {
