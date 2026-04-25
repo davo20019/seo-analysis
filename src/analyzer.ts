@@ -16,6 +16,12 @@ import {
   type RobotsRules,
 } from "./checks/robots-checks.js";
 import { checkJsonLdValidation } from "./checks/schema-checks.js";
+import {
+  parseSitemapXml,
+  parseSitemapIndex,
+  checkSitemapLastmod,
+  type SitemapEntry,
+} from "./checks/sitemap-checks.js";
 import type {
   AnalyzeOptions,
   DuplicateGroup,
@@ -932,8 +938,35 @@ async function inspectInfrastructure(
 
     if (sitemapResult.value.status >= 200 && sitemapResult.value.status < 300) {
       sitemap.present = true;
-      sitemap.urlCount = (sitemapResult.value.text.match(/<loc>/gi) ?? []).length;
-      sitemap.isIndex = /<sitemapindex[\s>]/i.test(sitemapResult.value.text);
+      const xml = sitemapResult.value.text;
+      sitemap.isIndex = /<sitemapindex[\s>]/i.test(xml);
+
+      let allEntries: SitemapEntry[] = [];
+
+      if (sitemap.isIndex) {
+        const NESTED_CAP = 50;
+        const nestedUrls = parseSitemapIndex(xml);
+        const limited = nestedUrls.slice(0, NESTED_CAP);
+        const nestedResults = await Promise.allSettled(
+          limited.map((u) => fetchTextWithRetry(u, options))
+        );
+        for (const r of nestedResults) {
+          if (r.status === "fulfilled" && r.value.status >= 200 && r.value.status < 300) {
+            allEntries.push(...parseSitemapXml(r.value.text));
+          }
+        }
+        sitemap.urlCount = allEntries.length;
+        if (nestedUrls.length > NESTED_CAP) {
+          sitemap.coverageLimited = true;
+        }
+      } else {
+        allEntries = parseSitemapXml(xml);
+        sitemap.urlCount = allEntries.length;
+      }
+
+      for (const issue of checkSitemapLastmod(allEntries)) {
+        pushIssue(issues, issue);
+      }
     } else if (robotsTxt.sitemaps.length === 0) {
       pushIssue(
         issues,
