@@ -61,6 +61,159 @@ describe("pickBestGa4Property", () => {
   });
 });
 
+describe("Ga4EnrichmentSource Admin-API auto-resolve", () => {
+  it("auto-resolves a single matching property and skips Admin calls when override given", async () => {
+    let adminCalls = 0;
+    let dataCalls = 0;
+    const mockFetch: typeof fetch = async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.startsWith("https://oauth2.googleapis.com/token")) {
+        return jsonResponse({ access_token: "fake-token", expires_in: 3600 });
+      }
+      if (url.startsWith("https://analyticsadmin.googleapis.com/")) {
+        adminCalls += 1;
+        if (url.endsWith("/accountSummaries")) {
+          return jsonResponse({
+            accountSummaries: [
+              {
+                account: "accounts/1",
+                propertySummaries: [
+                  { property: "properties/111", displayName: "Example" },
+                ],
+              },
+            ],
+          });
+        }
+        if (url.endsWith("/properties/111/dataStreams")) {
+          return jsonResponse({
+            dataStreams: [
+              { type: "WEB_DATA_STREAM", webStreamData: { defaultUri: "https://example.com" } },
+            ],
+          });
+        }
+      }
+      if (url.includes(":runReport")) {
+        dataCalls += 1;
+        return jsonResponse({
+          rows: [
+            {
+              dimensionValues: [{ value: "https://example.com/foo" }],
+              metricValues: [{ value: "10" }, { value: "20" }, { value: "8" }, { value: "0.7" }],
+            },
+          ],
+          rowCount: 1,
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+
+    const source = new Ga4EnrichmentSource({
+      days: 30,
+      auth: new GoogleServiceAccountAuth({ json: testServiceAccountJson() }, mockFetch),
+      fetcher: mockFetch,
+    });
+    await source.fetch("https://example.com", "https://example.com/");
+    // Task 4 only verifies the resolution wiring; row-content assertions are in Task 5.
+    expect(adminCalls).toBe(2);
+    expect(dataCalls).toBe(1);
+    expect(source.lastResult?.property).toBe("properties/111");
+  });
+
+  it("with property override, skips Admin calls entirely", async () => {
+    let adminCalls = 0;
+    const mockFetch: typeof fetch = async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.startsWith("https://oauth2.googleapis.com/token")) {
+        return jsonResponse({ access_token: "fake-token", expires_in: 3600 });
+      }
+      if (url.startsWith("https://analyticsadmin.googleapis.com/")) {
+        adminCalls += 1;
+        throw new Error("Admin API should not be called when property is set");
+      }
+      if (url.includes(":runReport")) {
+        return jsonResponse({ rows: [], rowCount: 0 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+
+    const source = new Ga4EnrichmentSource({
+      property: "properties/999",
+      days: 7,
+      auth: new GoogleServiceAccountAuth({ json: testServiceAccountJson() }, mockFetch),
+      fetcher: mockFetch,
+    });
+    await source.fetch("https://example.com", "https://example.com/");
+    expect(adminCalls).toBe(0);
+    expect(source.lastResult?.property).toBe("properties/999");
+  });
+
+  it("throws with the candidate list when multiple properties match", async () => {
+    const mockFetch: typeof fetch = async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.startsWith("https://oauth2.googleapis.com/token")) {
+        return jsonResponse({ access_token: "fake-token", expires_in: 3600 });
+      }
+      if (url.endsWith("/accountSummaries")) {
+        return jsonResponse({
+          accountSummaries: [
+            {
+              account: "accounts/1",
+              propertySummaries: [
+                { property: "properties/111", displayName: "Prod" },
+                { property: "properties/222", displayName: "Staging" },
+              ],
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/properties/111/dataStreams") || url.endsWith("/properties/222/dataStreams")) {
+        return jsonResponse({
+          dataStreams: [
+            { type: "WEB_DATA_STREAM", webStreamData: { defaultUri: "https://example.com" } },
+          ],
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+
+    const source = new Ga4EnrichmentSource({
+      auth: new GoogleServiceAccountAuth({ json: testServiceAccountJson() }, mockFetch),
+      fetcher: mockFetch,
+    });
+    await expect(source.fetch("https://example.com", "https://example.com/")).rejects.toThrow(
+      /properties\/111.*properties\/222/s,
+    );
+  });
+
+  it("throws with a grant-URL hint when no property matches", async () => {
+    const mockFetch: typeof fetch = async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.startsWith("https://oauth2.googleapis.com/token")) {
+        return jsonResponse({ access_token: "fake-token", expires_in: 3600 });
+      }
+      if (url.endsWith("/accountSummaries")) {
+        return jsonResponse({ accountSummaries: [] });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+
+    const source = new Ga4EnrichmentSource({
+      auth: new GoogleServiceAccountAuth({ json: testServiceAccountJson() }, mockFetch),
+      fetcher: mockFetch,
+    });
+    await expect(source.fetch("https://example.com", "https://example.com/")).rejects.toThrow(
+      /--ga4-property/,
+    );
+  });
+});
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
 function makePage(url: string): PageReport {
   return {
     url,
