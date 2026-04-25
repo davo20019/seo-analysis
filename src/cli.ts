@@ -21,6 +21,7 @@ interface CliOptions {
   gscProperty: string | null;
   gscDays: number | null;
   gscServiceAccountKeyFile: string | null;
+  gscSetup: boolean;
   excludePathPatterns: string[];
   fullSitemap: boolean;
   htmlReportPath: string | null;
@@ -77,6 +78,7 @@ Options:
   --gsc-property <url>       Override GSC property auto-detection (URL-prefix or sc-domain:example.com)
   --gsc-days <n>             Days of GSC data to query. Default: 90
   --gsc-service-account-key-file <path>  Path to service-account JSON (overrides GOOGLE_APPLICATION_CREDENTIALS env var)
+  --gsc-setup                Interactive wizard to create a GSC service account and print the next steps
   --render                   Render pages with headless Chromium (Playwright) instead of raw fetch — needed for SPAs and JS-challenge sites
   --render-timeout-ms <n>    Timeout per page render in milliseconds (default: 30000)
   --keyword <term>          Search for this keyword in crawled pages (repeatable)
@@ -145,6 +147,7 @@ function parseArgs(argv: string[]): CliOptions {
     gscProperty: null,
     gscDays: null,
     gscServiceAccountKeyFile: null,
+    gscSetup: false,
     excludePathPatterns: [],
     fullSitemap: false,
     htmlReportPath: null,
@@ -252,6 +255,11 @@ function parseArgs(argv: string[]): CliOptions {
 
     if (arg === "--gsc") {
       options.gsc = true;
+      continue;
+    }
+
+    if (arg === "--gsc-setup") {
+      options.gscSetup = true;
       continue;
     }
 
@@ -504,7 +512,9 @@ function parseArgs(argv: string[]): CliOptions {
     options.urls.push(arg);
   }
 
-  if (options.fromDirectory) {
+  if (options.gscSetup) {
+    // Setup wizard short-circuits before crawl validation; URL is optional.
+  } else if (options.fromDirectory) {
     if (options.keywords.length === 0 && !options.keywordFile && !options.extractTerms) {
       throw new Error(
         "Use --from-directory with --keyword, --keyword-file, or --extract-terms."
@@ -568,6 +578,21 @@ async function loadKeywords(
   }
 
   return [...new Set(keywords)];
+}
+
+function resolveGscCredentialOptions(
+  cliFilePath: string | null,
+): { gscServiceAccountKey?: string; gscServiceAccountKeyFile?: string } {
+  const inlineJson =
+    process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON ?? process.env.GSC_SERVICE_ACCOUNT_KEY ?? null;
+  if (inlineJson && inlineJson.trim().length > 0) {
+    return { gscServiceAccountKey: inlineJson.trim() };
+  }
+  const filePath = cliFilePath ?? process.env.GOOGLE_APPLICATION_CREDENTIALS ?? null;
+  if (filePath && filePath.trim().length > 0) {
+    return { gscServiceAccountKeyFile: filePath.trim() };
+  }
+  return {};
 }
 
 function truncate(value: string, maxLength: number): string {
@@ -874,6 +899,12 @@ async function main(): Promise<void> {
   try {
     const options = parseArgs(process.argv.slice(2));
 
+    if (options.gscSetup) {
+      const { runGscSetup } = await import("./gsc-setup.js");
+      await runGscSetup(options.urls[0]);
+      return;
+    }
+
     if (options.diffMode) {
       if (!options.diffOldPath || !options.diffNewPath) {
         throw new Error("diff requires two arguments: <old.json> <new.json>");
@@ -934,9 +965,7 @@ async function main(): Promise<void> {
             gsc: options.gsc,
             ...(options.gscProperty ? { gscProperty: options.gscProperty } : {}),
             ...(options.gscDays !== null ? { gscDays: options.gscDays } : {}),
-            ...(options.gscServiceAccountKeyFile
-              ? { gscServiceAccountKeyFile: options.gscServiceAccountKeyFile }
-              : {}),
+            ...resolveGscCredentialOptions(options.gscServiceAccountKeyFile),
             render: options.render,
             ...(options.renderTimeoutMs ? { renderTimeoutMs: options.renderTimeoutMs } : {}),
             retries: options.retries,

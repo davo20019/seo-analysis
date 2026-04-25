@@ -1,6 +1,6 @@
 import type { GscPageMetrics } from "../types.js";
 import type { EnrichmentSource } from "./index.js";
-import { GoogleServiceAccountAuth, type ServiceAccountSource } from "./google-auth.js";
+import type { GoogleAccessTokenProvider } from "./google-auth.js";
 import { canonicalizeForMatch, indexByCanonicalUrl } from "./url-match.js";
 
 const GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
@@ -30,7 +30,12 @@ export interface GscFetchResult {
 export interface GscOptions {
   property?: string;
   days?: number;
-  serviceAccount: ServiceAccountSource;
+  /**
+   * Anything that produces a Google access token for the GSC scope. Today the
+   * CLI passes a `GoogleServiceAccountAuth`; a future SaaS will pass an OAuth
+   * refresh-token-backed provider without touching this adapter.
+   */
+  auth: GoogleAccessTokenProvider;
   fetcher?: typeof fetch;
 }
 
@@ -42,8 +47,7 @@ export class GscEnrichmentSource implements EnrichmentSource<GscPageMetrics> {
 
   async fetch(origin: string, _startUrl: string): Promise<Map<string, GscPageMetrics>> {
     const fetcher = this.opts.fetcher ?? fetch;
-    const auth = new GoogleServiceAccountAuth(this.opts.serviceAccount, fetcher);
-    const accessToken = await auth.getAccessToken([GSC_SCOPE]);
+    const accessToken = await this.opts.auth.getAccessToken([GSC_SCOPE]);
 
     const property = this.opts.property
       ? this.opts.property

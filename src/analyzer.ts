@@ -30,7 +30,7 @@ import {
   type ProbeFetcher,
 } from "./checks/agent-readiness-checks.js";
 import { applyEnrichment } from "./enrichment/index.js";
-import { resolveServiceAccountSource } from "./enrichment/google-auth.js";
+import { GoogleServiceAccountAuth, type ServiceAccountSource } from "./enrichment/google-auth.js";
 import { GscEnrichmentSource } from "./enrichment/gsc.js";
 import { checkJsonLdValidation } from "./checks/schema-checks.js";
 import { queryCrux, checkCruxMetrics } from "./crux.js";
@@ -2196,14 +2196,9 @@ async function runGscEnrichment(args: {
   pages: PageReport[];
   property?: string;
   days?: number;
-  serviceAccountKey?: string;
-  serviceAccountKeyFile?: string;
+  serviceAccount: ServiceAccountSource | null;
 }): Promise<import("./types.js").GscEnrichmentReport> {
-  const source = resolveServiceAccountSource(
-    args.serviceAccountKey ?? null,
-    args.serviceAccountKeyFile ?? null,
-  );
-  if (!source) {
+  if (!args.serviceAccount) {
     return {
       property: args.property ?? "",
       startDate: "",
@@ -2212,14 +2207,14 @@ async function runGscEnrichment(args: {
       matchedPages: 0,
       unmatchedRows: 0,
       error:
-        "GSC enrichment skipped: no service-account credentials. Set GOOGLE_APPLICATION_CREDENTIALS, GOOGLE_APPLICATION_CREDENTIALS_JSON, or pass --gsc-service-account-key-file.",
+        "GSC enrichment skipped: no service-account credentials. Set GOOGLE_APPLICATION_CREDENTIALS, GOOGLE_APPLICATION_CREDENTIALS_JSON, or pass --gsc-service-account-key-file. Run `seo-audit --gsc-setup` for an interactive walkthrough.",
     };
   }
 
   const gscSource = new GscEnrichmentSource({
     property: args.property,
     days: args.days,
-    serviceAccount: source,
+    auth: new GoogleServiceAccountAuth(args.serviceAccount),
   });
 
   const origin = new URL(args.startUrl).origin;
@@ -2652,13 +2647,17 @@ export async function analyzeSite(
 
   let gsc;
   if (rawOptions.gsc) {
+    const serviceAccount: ServiceAccountSource | null = rawOptions.gscServiceAccountKey
+      ? { json: rawOptions.gscServiceAccountKey }
+      : rawOptions.gscServiceAccountKeyFile
+        ? { filePath: rawOptions.gscServiceAccountKeyFile }
+        : null;
     gsc = await runGscEnrichment({
       startUrl: normalizedStartUrl,
       pages,
       property: rawOptions.gscProperty,
       days: rawOptions.gscDays,
-      serviceAccountKey: rawOptions.gscServiceAccountKey,
-      serviceAccountKeyFile: rawOptions.gscServiceAccountKeyFile
+      serviceAccount
     });
   }
 

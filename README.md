@@ -154,11 +154,29 @@ GOOGLE_APPLICATION_CREDENTIALS=./gsc-service-account.json \
 
 The `--gsc` flag pulls clicks, impressions, CTR, and average position from Search Console for every crawled URL and adds a **Priority issues** section to the summary — high/medium-severity issues sorted by impressions, so the audit answers "which problem affects pages that actually get traffic?" rather than just "what problems exist?".
 
-**Auth** uses a Google Cloud service account (no OAuth browser flow, no token caching). One-time setup:
+**Auth** uses a Google Cloud service account (no OAuth browser flow, no token caching). The fastest way to set it up is the bundled wizard:
 
-1. In Google Cloud, create a service account and download its JSON key.
-2. In Search Console (Settings → Users and permissions), add the service account email as a **Restricted** user on the property you want to audit.
-3. Either set `GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json` (file path) or `GOOGLE_APPLICATION_CREDENTIALS_JSON='{...inline json...}'` (CI-friendly), or pass `--gsc-service-account-key-file /path/to/key.json`.
+```bash
+seo-audit --gsc-setup https://your-site.com
+```
+
+The wizard:
+- Detects `gcloud` and (if present) creates the service account, downloads the key to `~/.config/seo-audit/gsc-key.json`, and chmods it `600`.
+- Falls back to printed step-by-step instructions if `gcloud` isn't available.
+- Prints the service-account email to grant in Search Console (Settings → Users and permissions → Add user → Restricted).
+- Verifies the credentials by exchanging them for a real access token before declaring success.
+
+After setup, every subsequent run is silent:
+
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS=~/.config/seo-audit/gsc-key.json
+seo-audit https://your-site.com --gsc
+```
+
+If you prefer manual setup or are running in CI, the auth layer also accepts:
+- `GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json` (file path)
+- `GOOGLE_APPLICATION_CREDENTIALS_JSON='{...inline json...}'` (CI-friendly, one secret)
+- `--gsc-service-account-key-file /path/to/key.json` (CLI override)
 
 The same credentials work for any future Google integration (e.g. a future `--ga4`).
 

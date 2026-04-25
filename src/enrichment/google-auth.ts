@@ -2,15 +2,28 @@ import { createSign } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 /**
- * Service-account-based authentication for Google APIs.
+ * Auth abstraction for Google APIs.
  *
- * Avoids the heavy `googleapis` / `google-auth-library` SDKs (~50MB combined)
- * by hand-rolling the JWT bearer flow described at:
- * https://developers.google.com/identity/protocols/oauth2/service-account
+ * `GoogleAccessTokenProvider` is the only interface consumers (e.g.
+ * GscEnrichmentSource) depend on. Today the only implementation is
+ * `GoogleServiceAccountAuth` for the JWT bearer flow. A future SaaS frontend
+ * will add `GoogleOAuthRefreshTokenAuth` (or similar) without touching the
+ * GSC adapter or any other callsite.
  *
- * Token endpoint:  POST https://oauth2.googleapis.com/token
- * JWT lifetime:    1 hour (we cache and refresh ~30s before expiry)
+ * No `process.env` reads happen here — credential resolution is the caller's
+ * responsibility (see `cli.ts` for the env-var/flag wiring used by the CLI).
+ *
+ * Implementation notes for the service-account path:
+ *  - Hand-rolled JWT bearer flow per
+ *    https://developers.google.com/identity/protocols/oauth2/service-account
+ *  - Avoids the heavy `googleapis` / `google-auth-library` SDKs.
+ *  - Token endpoint: POST https://oauth2.googleapis.com/token
+ *  - JWT lifetime: 1 hour (we cache and refresh ~30s before expiry).
  */
+
+export interface GoogleAccessTokenProvider {
+  getAccessToken(scopes: string[]): Promise<string>;
+}
 
 interface ServiceAccountKey {
   client_email: string;
@@ -30,7 +43,7 @@ export interface ServiceAccountSource {
   filePath?: string;
 }
 
-export class GoogleServiceAccountAuth {
+export class GoogleServiceAccountAuth implements GoogleAccessTokenProvider {
   private cached: Map<string, CachedToken> = new Map();
   private keyPromise: Promise<ServiceAccountKey> | null = null;
   private fetcher: typeof fetch;
@@ -127,20 +140,4 @@ function base64UrlEncode(value: string): string {
 
 function base64UrlEncodeBuffer(buf: Buffer): string {
   return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-export function resolveServiceAccountSource(
-  jsonOverride: string | null | undefined,
-  filePathOverride: string | null | undefined,
-): ServiceAccountSource | null {
-  const json =
-    jsonOverride ?? process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON ?? process.env.GSC_SERVICE_ACCOUNT_KEY ?? null;
-  if (json && json.trim().length > 0) {
-    return { json: json.trim() };
-  }
-  const filePath = filePathOverride ?? process.env.GOOGLE_APPLICATION_CREDENTIALS ?? null;
-  if (filePath && filePath.trim().length > 0) {
-    return { filePath: filePath.trim() };
-  }
-  return null;
 }

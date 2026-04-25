@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { GscEnrichmentSource, pickBestProperty } from "../../src/enrichment/gsc.js";
+import { GoogleServiceAccountAuth } from "../../src/enrichment/google-auth.js";
 import { applyEnrichment } from "../../src/enrichment/index.js";
 import type { PageReport } from "../../src/types.js";
 
@@ -104,7 +105,7 @@ describe("GscEnrichmentSource", () => {
 
     const source = new GscEnrichmentSource({
       days: 30,
-      serviceAccount: { json: testServiceAccountJson() },
+      auth: new GoogleServiceAccountAuth({ json: testServiceAccountJson() }, mockFetch),
       fetcher: mockFetch,
     });
 
@@ -121,13 +122,14 @@ describe("GscEnrichmentSource", () => {
   });
 
   it("attaches metrics onto pages via applyEnrichment", async () => {
+    const sharedMock = mockFetchWithRows([
+      { keys: ["https://example.com/foo/"], clicks: 5, impressions: 50, ctr: 0.1, position: 7 },
+    ]);
     const source = new GscEnrichmentSource({
       property: "sc-domain:example.com",
       days: 30,
-      serviceAccount: { json: testServiceAccountJson() },
-      fetcher: mockFetchWithRows([
-        { keys: ["https://example.com/foo/"], clicks: 5, impressions: 50, ctr: 0.1, position: 7 },
-      ]),
+      auth: new GoogleServiceAccountAuth({ json: testServiceAccountJson() }, sharedMock),
+      fetcher: sharedMock,
     });
     const data = await source.fetch("https://example.com", "https://example.com/");
     const pages = [makePage("https://example.com/foo")];
