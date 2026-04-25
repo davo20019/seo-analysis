@@ -2,7 +2,7 @@
 
 This project is a crawl-based SEO CLI for auditing websites.
 
-It focuses on technical SEO issues that can be derived from the crawl itself, with optional Lighthouse support for a small set of pages.
+It focuses on technical SEO issues that can be derived from the crawl itself, with optional headless-Chromium rendering (`--render`), Google CrUX field data (`--crux`), and Lighthouse audits for a small set of pages.
 
 ## What It Checks
 
@@ -85,6 +85,9 @@ npm run dev -- https://example.com --exclude-path '/tag/' --exclude-path '/page/
 
 # Add Lighthouse for a few representative pages
 npm run dev -- https://example.com --lighthouse --lighthouse-pages 3
+
+# Override the User-Agent string sent by the crawler
+npm run dev -- https://example.com --user-agent "Mozilla/5.0 (compatible; MyCrawler/1.0)"
 ```
 
 ```bash
@@ -147,7 +150,8 @@ npm run dev -- --from-directory ./site_backup --extract-terms
 
 - `--sample-sitemap` is useful when you want representative sitemap coverage quickly, but link-graph findings are less complete because the crawl is intentionally sampled.
 - Sitemap reconciliation relies on the set of sitemap URLs the CLI was able to collect. The report marks sitemap coverage as partial when that set was truncated.
-- Structured data support is currently presence-based. The CLI detects JSON-LD types, but it does not yet perform full schema validation.
+- JSON-LD validation covers Google's rich-result requirements for Product, Article (BlogPosting/NewsArticle), FAQPage, BreadcrumbList, Organization, and LocalBusiness. Other schema types are still presence-only.
+- `--render` (Playwright/Chromium) handles SPAs and JS-challenge sites (Cloudflare turnstile, JS-rendered DOM) but `redirectChain` is not captured for rendered pages.
 
 ## License
 
