@@ -374,20 +374,27 @@ If a future version ever adds opt-in telemetry, it will be exactly that — opt-
 
 ## CHANGELOG
 
-### Unreleased
+### v0.3.0 — 2026-04-25
 
 - **Added:** `--ga4` flag and supporting `--ga4-property`, `--ga4-days`,
   `--ga4-service-account-key-file` options. Enriches each crawled page with
   GA4 sessions, pageviews, users, and engagement rate; reuses the
   service-account workflow set up by `--gsc-setup`.
+- **Added:** `ga4`, `ga4-property`, `ga4-days`, and `ga4-service-account-key`
+  inputs on the GitHub Action. The `ga4-service-account-key` input falls back
+  to `gsc-service-account-key` when blank, since the same SA can read both.
+- **Added:** `report.ga4` enrichment-result summary alongside `report.gsc`.
+- **Added:** `page.metrics.ga4` per-page GA4 metrics alongside
+  `page.metrics.gsc`.
 - **Changed:** `summary.priorityIssues[]` entries now carry `rankedBy`,
   `rankValue`, and `metrics` fields; the GSC-specific `impressions`, `clicks`,
   and `position` fields are kept populated for one minor cycle (deprecated).
 - **Changed:** `summary.priorityIssues` is now built whenever GSC **or** GA4
   enrichment succeeds (previously only when GSC succeeded).
-- **Added:** `report.ga4` enrichment-result summary alongside `report.gsc`.
-- **Added:** `page.metrics.ga4` per-page GA4 metrics alongside
-  `page.metrics.gsc`.
+- **Changed:** HTML report now renders `<h2>Analytics</h2>` (when GA4 is
+  enabled) and `<h2>Priority issues</h2>` as top-level sections; the priority
+  list previously rendered nested under `<h2>Search Console</h2>`, which hid
+  it on GA4-only audits.
 
 ## License
 
