@@ -29,6 +29,9 @@ import {
   probeWellKnownEndpoints,
   type ProbeFetcher,
 } from "./checks/agent-readiness-checks.js";
+import { applyEnrichment } from "./enrichment/index.js";
+import { resolveServiceAccountSource } from "./enrichment/google-auth.js";
+import { GscEnrichmentSource } from "./enrichment/gsc.js";
 import { checkJsonLdValidation } from "./checks/schema-checks.js";
 import { queryCrux, checkCruxMetrics } from "./crux.js";
 import {
@@ -2188,12 +2191,98 @@ async function runAgentReadiness(args: {
   });
 }
 
+async function runGscEnrichment(args: {
+  startUrl: string;
+  pages: PageReport[];
+  property?: string;
+  days?: number;
+  serviceAccountKey?: string;
+  serviceAccountKeyFile?: string;
+}): Promise<import("./types.js").GscEnrichmentReport> {
+  const source = resolveServiceAccountSource(
+    args.serviceAccountKey ?? null,
+    args.serviceAccountKeyFile ?? null,
+  );
+  if (!source) {
+    return {
+      property: args.property ?? "",
+      startDate: "",
+      endDate: "",
+      totalRows: 0,
+      matchedPages: 0,
+      unmatchedRows: 0,
+      error:
+        "GSC enrichment skipped: no service-account credentials. Set GOOGLE_APPLICATION_CREDENTIALS, GOOGLE_APPLICATION_CREDENTIALS_JSON, or pass --gsc-service-account-key-file.",
+    };
+  }
+
+  const gscSource = new GscEnrichmentSource({
+    property: args.property,
+    days: args.days,
+    serviceAccount: source,
+  });
+
+  const origin = new URL(args.startUrl).origin;
+  try {
+    const data = await gscSource.fetch(origin, args.startUrl);
+    const { matched } = applyEnrichment(args.pages, gscSource, data);
+    const result = gscSource.lastResult;
+    return {
+      property: result?.property ?? "",
+      startDate: result?.startDate ?? "",
+      endDate: result?.endDate ?? "",
+      totalRows: result?.totalRows ?? 0,
+      matchedPages: matched,
+      unmatchedRows: Math.max(0, (result?.totalRows ?? 0) - matched),
+      error: null,
+    };
+  } catch (err) {
+    return {
+      property: args.property ?? "",
+      startDate: "",
+      endDate: "",
+      totalRows: 0,
+      matchedPages: 0,
+      unmatchedRows: 0,
+      error: `GSC enrichment failed: ${(err as Error).message}`,
+    };
+  }
+}
+
+function buildPriorityIssues(
+  pages: PageReport[],
+  limit = 10,
+): import("./types.js").PrioritySummaryEntry[] {
+  const entries: import("./types.js").PrioritySummaryEntry[] = [];
+  for (const page of pages) {
+    const gsc = page.metrics?.gsc;
+    if (!gsc) continue;
+    if (gsc.impressions <= 0) continue;
+    for (const issue of page.issues) {
+      if (issue.severity !== "high" && issue.severity !== "medium") continue;
+      entries.push({
+        code: issue.code,
+        severity: issue.severity,
+        url: page.finalUrl,
+        impressions: gsc.impressions,
+        clicks: gsc.clicks,
+        position: gsc.position,
+      });
+    }
+  }
+  entries.sort((a, b) => {
+    if (a.severity !== b.severity) return a.severity === "high" ? -1 : 1;
+    return b.impressions - a.impressions;
+  });
+  return entries.slice(0, limit);
+}
+
 function buildSummary(
   pages: PageReport[],
   infrastructure: InfrastructureReport,
   duplicateTitles: DuplicateGroup[],
   duplicateMetaDescriptions: DuplicateGroup[]
-) {
+): import("./types.js").SiteSummary {
   const issueCounts = new Map<string, number>();
   const issueTotals: Record<Severity, number> = {
     high: 0,
@@ -2561,20 +2650,38 @@ export async function analyzeSite(
     });
   }
 
+  let gsc;
+  if (rawOptions.gsc) {
+    gsc = await runGscEnrichment({
+      startUrl: normalizedStartUrl,
+      pages,
+      property: rawOptions.gscProperty,
+      days: rawOptions.gscDays,
+      serviceAccountKey: rawOptions.gscServiceAccountKey,
+      serviceAccountKeyFile: rawOptions.gscServiceAccountKeyFile
+    });
+  }
+
+  const summary = buildSummary(
+    pages,
+    infrastructureResult.report,
+    duplicateTitles,
+    duplicateMetaDescriptions
+  );
+  if (gsc && !gsc.error) {
+    summary.priorityIssues = buildPriorityIssues(pages);
+  }
+
   return {
     startUrl: normalizedStartUrl,
     infrastructure: infrastructureResult.report,
-    summary: buildSummary(
-      pages,
-      infrastructureResult.report,
-      duplicateTitles,
-      duplicateMetaDescriptions
-    ),
+    summary,
     pages,
     lighthouse,
     keywordSummary,
     topTerms,
-    ...(agentReadiness ? { agentReadiness } : {})
+    ...(agentReadiness ? { agentReadiness } : {}),
+    ...(gsc ? { gsc } : {})
   };
   } finally {
     if (renderBrowser) {

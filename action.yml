@@ -32,6 +32,22 @@ inputs:
     description: "Score AI-agent readiness: llms.txt depth, AI-bot rules, well-known endpoints (true|false)."
     required: false
     default: "false"
+  gsc:
+    description: "Enrich crawled pages with Google Search Console metrics (true|false). Requires gsc-service-account-key."
+    required: false
+    default: "false"
+  gsc-property:
+    description: "GSC property URL or sc-domain:example.com identifier. Auto-detected when blank."
+    required: false
+    default: ""
+  gsc-days:
+    description: "Days of GSC history to query. Default 90."
+    required: false
+    default: ""
+  gsc-service-account-key:
+    description: "Service-account JSON for GSC (use a repo secret). Service-account email must have GSC property access."
+    required: false
+    default: ""
   crux-api-key:
     description: "Google API key for CrUX. Use a repo secret."
     required: false
@@ -102,6 +118,10 @@ runs:
         SEO_INPUT_RENDER: ${{ inputs.render }}
         SEO_INPUT_CRUX: ${{ inputs.crux }}
         SEO_INPUT_AGENT_READINESS: ${{ inputs.agent-readiness }}
+        SEO_INPUT_GSC: ${{ inputs.gsc }}
+        SEO_INPUT_GSC_PROPERTY: ${{ inputs.gsc-property }}
+        SEO_INPUT_GSC_DAYS: ${{ inputs.gsc-days }}
+        GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ inputs.gsc-service-account-key }}
         SEO_INPUT_USER_AGENT: ${{ inputs.user-agent }}
         SEO_INPUT_INCLUDE_PATHS: ${{ inputs.include-paths }}
         SEO_INPUT_EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
@@ -126,6 +146,15 @@ runs:
         fi
         if [ "$SEO_INPUT_AGENT_READINESS" = "true" ]; then
           ARGS+=("--agent-readiness")
+        fi
+        if [ "$SEO_INPUT_GSC" = "true" ]; then
+          ARGS+=("--gsc")
+        fi
+        if [ -n "$SEO_INPUT_GSC_PROPERTY" ]; then
+          ARGS+=("--gsc-property" "$SEO_INPUT_GSC_PROPERTY")
+        fi
+        if [ -n "$SEO_INPUT_GSC_DAYS" ]; then
+          ARGS+=("--gsc-days" "$SEO_INPUT_GSC_DAYS")
         fi
         if [ -n "$SEO_INPUT_USER_AGENT" ]; then
           ARGS+=("--user-agent" "$SEO_INPUT_USER_AGENT")

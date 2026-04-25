@@ -88,6 +88,37 @@ export interface PageReport {
   issues: Issue[];
   discoveredLinks: string[];
   keywordMatches?: KeywordMatch[];
+  metrics?: PageMetrics;
+}
+
+export interface PageMetrics {
+  gsc?: GscPageMetrics;
+}
+
+export interface GscPageMetrics {
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+}
+
+export interface GscEnrichmentReport {
+  property: string;
+  startDate: string;
+  endDate: string;
+  totalRows: number;
+  matchedPages: number;
+  unmatchedRows: number;
+  error: string | null;
+}
+
+export interface PrioritySummaryEntry {
+  code: string;
+  severity: Severity;
+  url: string;
+  impressions: number;
+  clicks: number;
+  position: number;
 }
 
 export interface InfrastructureReport {
@@ -168,6 +199,7 @@ export interface SiteSummary {
   }>;
   duplicateTitles: DuplicateGroup[];
   duplicateMetaDescriptions: DuplicateGroup[];
+  priorityIssues?: PrioritySummaryEntry[];
 }
 
 export type AgentBotPolicyStatus = "allowed" | "blocked" | "unspecified";
@@ -247,6 +279,7 @@ export interface SiteReport {
   keywordSummary?: KeywordSummary[];
   topTerms?: TermFrequency[];
   agentReadiness?: AgentReadinessReport;
+  gsc?: GscEnrichmentReport;
 }
 
 export interface AnalyzeOptions {
@@ -270,4 +303,9 @@ export interface AnalyzeOptions {
   crux?: boolean;
   cruxApiKey?: string;
   agentReadiness?: boolean;
+  gsc?: boolean;
+  gscProperty?: string;
+  gscDays?: number;
+  gscServiceAccountKey?: string;
+  gscServiceAccountKeyFile?: string;
 }

@@ -1,4 +1,11 @@
-import type { AgentReadinessReport, SiteReport, Issue, Severity } from "./types.js";
+import type {
+  AgentReadinessReport,
+  GscEnrichmentReport,
+  PrioritySummaryEntry,
+  SiteReport,
+  Issue,
+  Severity,
+} from "./types.js";
 import { chromium } from "playwright";
 
 export function escapeHtml(str: string): string {
@@ -76,9 +83,39 @@ ${renderPages(report)}
 
 <h2>Infrastructure</h2>
 ${renderInfrastructure(report)}
+${report.gsc ? `\n<h2>Search Console</h2>\n${renderGscSection(report.gsc, report.summary.priorityIssues ?? [])}` : ""}
 ${report.agentReadiness ? `\n<h2>Agent Readiness</h2>\n${renderAgentReadiness(report.agentReadiness)}` : ""}
 </body>
 </html>`;
+}
+
+function renderGscSection(gsc: GscEnrichmentReport, priority: PrioritySummaryEntry[]): string {
+  if (gsc.error) {
+    return `<p class="muted">${escapeHtml(gsc.error)}</p>`;
+  }
+  const summary = `<p class="muted">Property: <code>${escapeHtml(gsc.property)}</code> · window ${escapeHtml(gsc.startDate)} – ${escapeHtml(gsc.endDate)} · rows fetched ${gsc.totalRows} · matched to crawled pages ${gsc.matchedPages} · unmatched ${gsc.unmatchedRows}.</p>`;
+
+  if (priority.length === 0) {
+    return `${summary}<p class="muted">No priority issues — high/medium-severity issues didn't land on pages with measurable impressions.</p>`;
+  }
+
+  const rows = priority
+    .map(
+      (e) => `<tr>
+<td><span class="badge ${e.severity}">${e.severity}</span></td>
+<td><code>${escapeHtml(e.code)}</code></td>
+<td><a href="${escapeHtml(e.url)}">${escapeHtml(e.url)}</a></td>
+<td>${e.impressions}</td>
+<td>${e.clicks}</td>
+<td>${e.position.toFixed(1)}</td>
+</tr>`,
+    )
+    .join("");
+
+  return `${summary}
+<h3>Priority issues</h3>
+<p class="muted">High/medium-severity issues on pages with GSC impressions, sorted by traffic.</p>
+<table><thead><tr><th>Severity</th><th>Code</th><th>URL</th><th>Impressions</th><th>Clicks</th><th>Avg position</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function renderAgentReadiness(readiness: AgentReadinessReport): string {
@@ -195,13 +232,21 @@ function renderIssueCatalog(groups: IssueGroup[]): string {
 
 function renderPages(report: SiteReport): string {
   if (report.pages.length === 0) return `<p class="muted">No pages crawled.</p>`;
-  const rows = report.pages.map((p) => `<tr>
+  const showGsc = report.pages.some((p) => p.metrics?.gsc);
+  const rows = report.pages.map((p) => {
+    const gscCell = showGsc
+      ? `<td>${p.metrics?.gsc ? `${p.metrics.gsc.impressions} impr / ${p.metrics.gsc.clicks} clk / pos ${p.metrics.gsc.position.toFixed(1)}` : ""}</td>`
+      : "";
+    return `<tr>
 <td><a href="${escapeHtml(p.finalUrl)}">${escapeHtml(p.finalUrl)}</a></td>
 <td>${escapeHtml(p.checks.title ?? "")}</td>
 <td>${p.status}</td>
 <td>${p.issues.length}</td>
-</tr>`).join("");
-  return `<table><thead><tr><th>URL</th><th>Title</th><th>Status</th><th>Issues</th></tr></thead><tbody>${rows}</tbody></table>`;
+${gscCell}
+</tr>`;
+  }).join("");
+  const gscHead = showGsc ? "<th>GSC</th>" : "";
+  return `<table><thead><tr><th>URL</th><th>Title</th><th>Status</th><th>Issues</th>${gscHead}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function renderInfrastructure(report: SiteReport): string {
