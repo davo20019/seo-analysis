@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseJsonLd, validateProduct, validateArticle, validateFaq, validateBreadcrumb, validateOrganization, validateLocalBusiness } from "../../src/checks/schema-checks.js";
+import { checkJsonLdValidation } from "../../src/checks/schema-checks.js";
 
 describe("parseJsonLd", () => {
   it("parses a single object script", () => {
@@ -197,5 +198,25 @@ describe("validateLocalBusiness", () => {
       address: { "@type": "PostalAddress", streetAddress: "1 Main", addressLocality: "Town", addressCountry: "US" },
       telephone: "+1-555-1234",
     })).toEqual([]);
+  });
+});
+
+describe("checkJsonLdValidation (orchestrator)", () => {
+  it("dispatches each object to the right validator", () => {
+    const scripts = [
+      `{"@type":"Product","name":"X"}`,
+      `{"@type":"Article","headline":"Y"}`,
+    ];
+    const codes = checkJsonLdValidation(scripts).map((i) => i.code);
+    expect(codes).toContain("SCHEMA_PRODUCT_MISSING_IMAGE");
+    expect(codes).toContain("SCHEMA_ARTICLE_MISSING_AUTHOR");
+  });
+
+  it("returns empty when there is no JSON-LD at all", () => {
+    expect(checkJsonLdValidation([])).toEqual([]);
+  });
+
+  it("ignores @types we do not validate", () => {
+    expect(checkJsonLdValidation([`{"@type":"WebPage","name":"X"}`])).toEqual([]);
   });
 });

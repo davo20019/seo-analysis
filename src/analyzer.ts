@@ -15,6 +15,7 @@ import {
   checkUrlAgainstRobots,
   type RobotsRules,
 } from "./checks/robots-checks.js";
+import { checkJsonLdValidation } from "./checks/schema-checks.js";
 import type {
   AnalyzeOptions,
   DuplicateGroup,
@@ -1122,11 +1123,10 @@ function analyzeHtml(
   ]
     .filter(([, value]) => hasSuspiciousMetadataValue(value))
     .map(([field]) => field);
-  const schemaTypes = extractSchemaTypes(
-    $('script[type="application/ld+json"]')
-      .map((_, element) => $(element).html() ?? "")
-      .get()
-  );
+  const ldScripts: string[] = $('script[type="application/ld+json"]')
+    .map((_, element) => $(element).html() ?? "")
+    .get();
+  const schemaTypes = extractSchemaTypes(ldScripts);
   const bodyText = $("body").text().replace(/\s+/g, " ").trim();
   const wordCount = bodyText ? bodyText.split(" ").length : 0;
 
@@ -1586,6 +1586,7 @@ function analyzeHtml(
   for (const issue of checkXRobotsTag(response.headers)) pushIssue(issues, issue);
   for (const issue of checkResponseHeaders(response.finalUrl, response.headers)) pushIssue(issues, issue);
   for (const issue of checkUrlAgainstRobots(response.finalUrl, userAgent, robotsRules)) pushIssue(issues, issue);
+  for (const issue of checkJsonLdValidation(ldScripts)) pushIssue(issues, issue);
 
   return {
     url: normalizeUrl(requestedUrl),

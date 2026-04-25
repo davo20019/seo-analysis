@@ -198,3 +198,22 @@ export function validateLocalBusiness(obj: JsonLdObject): Issue[] {
   }
   return issues;
 }
+
+export function checkJsonLdValidation(rawScripts: string[]): Issue[] {
+  const objects = parseJsonLd(rawScripts);
+  const issues: Issue[] = [];
+  for (const obj of objects) {
+    if (hasType(obj, "Product")) issues.push(...validateProduct(obj));
+    if (hasType(obj, "Article") || hasType(obj, "BlogPosting") || hasType(obj, "NewsArticle")) {
+      issues.push(...validateArticle(obj));
+    }
+    if (hasType(obj, "FAQPage")) issues.push(...validateFaq(obj));
+    if (hasType(obj, "BreadcrumbList")) issues.push(...validateBreadcrumb(obj));
+    if (hasType(obj, "LocalBusiness")) {
+      issues.push(...validateLocalBusiness(obj));
+    } else if (hasType(obj, "Organization")) {
+      issues.push(...validateOrganization(obj));
+    }
+  }
+  return issues;
+}
