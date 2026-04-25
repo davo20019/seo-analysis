@@ -5,6 +5,7 @@ import { scanDirectory } from "./directory-scanner.js";
 import type {
   AgentReadinessReport,
   DuplicateGroup,
+  Ga4EnrichmentReport,
   GscEnrichmentReport,
   KeywordSummary,
   LighthouseReport,
@@ -22,6 +23,10 @@ interface CliOptions {
   gscDays: number | null;
   gscServiceAccountKeyFile: string | null;
   gscSetup: boolean;
+  ga4: boolean;
+  ga4Property: string | null;
+  ga4Days: number | null;
+  ga4ServiceAccountKeyFile: string | null;
   excludePathPatterns: string[];
   fullSitemap: boolean;
   htmlReportPath: string | null;
@@ -79,6 +84,10 @@ Options:
   --gsc-days <n>             Days of GSC data to query. Default: 90
   --gsc-service-account-key-file <path>  Path to service-account JSON (overrides GOOGLE_APPLICATION_CREDENTIALS env var)
   --gsc-setup                Interactive wizard to create a GSC service account and print the next steps
+  --ga4                      Enrich crawled pages with Google Analytics 4 sessions/pageviews/users/engagement (service-account auth; reuses --gsc-setup's SA)
+  --ga4-property <id>        Override property auto-detection (e.g. properties/123456789)
+  --ga4-days <n>             Days of GA4 data to query. Default: 90
+  --ga4-service-account-key-file <path>  Path to service-account JSON (overrides GOOGLE_APPLICATION_CREDENTIALS env var)
   --render                   Render pages with headless Chromium (Playwright) instead of raw fetch — needed for SPAs and JS-challenge sites
   --render-timeout-ms <n>    Timeout per page render in milliseconds (default: 30000)
   --keyword <term>          Search for this keyword in crawled pages (repeatable)
@@ -148,6 +157,10 @@ function parseArgs(argv: string[]): CliOptions {
     gscDays: null,
     gscServiceAccountKeyFile: null,
     gscSetup: false,
+    ga4: false,
+    ga4Property: null,
+    ga4Days: null,
+    ga4ServiceAccountKeyFile: null,
     excludePathPatterns: [],
     fullSitemap: false,
     htmlReportPath: null,
@@ -293,6 +306,38 @@ function parseArgs(argv: string[]): CliOptions {
 
     if (arg.startsWith("--gsc-service-account-key-file=")) {
       options.gscServiceAccountKeyFile = arg.split("=").slice(1).join("=");
+      continue;
+    }
+
+    if (arg === "--ga4") {
+      options.ga4 = true;
+      continue;
+    }
+    if (arg === "--ga4-property") {
+      options.ga4Property = requireValue(argv, index, "--ga4-property");
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--ga4-property=")) {
+      options.ga4Property = arg.split("=").slice(1).join("=");
+      continue;
+    }
+    if (arg === "--ga4-days") {
+      options.ga4Days = parseNumberValue(requireValue(argv, index, "--ga4-days"), "--ga4-days");
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--ga4-days=")) {
+      options.ga4Days = parseNumberValue(arg.split("=")[1] ?? "", "--ga4-days");
+      continue;
+    }
+    if (arg === "--ga4-service-account-key-file") {
+      options.ga4ServiceAccountKeyFile = requireValue(argv, index, "--ga4-service-account-key-file");
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--ga4-service-account-key-file=")) {
+      options.ga4ServiceAccountKeyFile = arg.split("=").slice(1).join("=");
       continue;
     }
 
@@ -605,6 +650,16 @@ function mapToGscCreds(creds: { key?: string; keyFile?: string }): {
   };
 }
 
+function mapToGa4Creds(creds: { key?: string; keyFile?: string }): {
+  ga4ServiceAccountKey?: string;
+  ga4ServiceAccountKeyFile?: string;
+} {
+  return {
+    ...(creds.key !== undefined ? { ga4ServiceAccountKey: creds.key } : {}),
+    ...(creds.keyFile !== undefined ? { ga4ServiceAccountKeyFile: creds.keyFile } : {}),
+  };
+}
+
 function truncate(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
     return value;
@@ -708,13 +763,32 @@ function formatGscEnrichment(gsc: GscEnrichmentReport): string[] {
   ];
 }
 
+function formatGa4Enrichment(ga4: Ga4EnrichmentReport): string[] {
+  if (ga4.error) {
+    return ["", `GA4 enrichment: ${ga4.error}`];
+  }
+  return [
+    "",
+    `GA4 enrichment: property=${ga4.property} window=${ga4.startDate}..${ga4.endDate}`,
+    `  rows fetched: ${ga4.totalRows}, matched to crawled pages: ${ga4.matchedPages}, unmatched: ${ga4.unmatchedRows}`,
+  ];
+}
+
 function formatPriorityIssues(entries: PrioritySummaryEntry[]): string[] {
   if (entries.length === 0) return [];
-  const lines = ["", "Priority issues (high/medium severity on pages with GSC traffic):"];
+  const lines = ["", "Priority issues (high/medium severity on pages with traffic):"];
   for (const e of entries) {
-    lines.push(
-      `  [${e.severity}] ${e.code} — ${e.url} (impr=${e.impressions}, clicks=${e.clicks}, pos=${e.position.toFixed(1)})`
-    );
+    if (e.rankedBy === "gsc") {
+      const g = e.metrics.gsc;
+      lines.push(
+        `  [${e.severity}] ${e.code} — ${e.url} (via GSC: impr=${g?.impressions ?? 0}, clicks=${g?.clicks ?? 0}, pos=${(g?.position ?? 0).toFixed(1)})`,
+      );
+    } else {
+      const g = e.metrics.ga4;
+      lines.push(
+        `  [${e.severity}] ${e.code} — ${e.url} (via GA4: sessions=${g?.sessions ?? 0}, users=${g?.totalUsers ?? 0}, eng=${((g?.engagementRate ?? 0) * 100).toFixed(1)}%)`,
+      );
+    }
   }
   return lines;
 }
@@ -829,6 +903,12 @@ function formatPage(page: SiteReport["pages"][number]): string {
     lines.splice(2, 0, `  gsc impressions=${gsc.impressions} clicks=${gsc.clicks} ctr=${(gsc.ctr * 100).toFixed(1)}% pos=${gsc.position.toFixed(1)}`);
   }
 
+  const ga4 = page.metrics?.ga4;
+  if (ga4) {
+    // Insert below the GSC line if present, otherwise at the same position.
+    lines.splice(gsc ? 3 : 2, 0, `  ga4 sessions=${ga4.sessions} pageviews=${ga4.screenPageViews} users=${ga4.totalUsers} eng=${(ga4.engagementRate * 100).toFixed(1)}%`);
+  }
+
   if (page.url !== page.finalUrl) {
     lines.splice(1, 0, `  requested=${page.url}`);
   }
@@ -880,6 +960,10 @@ function formatTextReport(report: SiteReport): string {
 
   if (report.gsc) {
     lines.push(...formatGscEnrichment(report.gsc));
+  }
+
+  if (report.ga4) {
+    lines.push(...formatGa4Enrichment(report.ga4));
   }
 
   if (report.summary.priorityIssues && report.summary.priorityIssues.length > 0) {
@@ -976,6 +1060,10 @@ async function main(): Promise<void> {
             ...(options.gscProperty ? { gscProperty: options.gscProperty } : {}),
             ...(options.gscDays !== null ? { gscDays: options.gscDays } : {}),
             ...mapToGscCreds(resolveGoogleCredentialOptions(options.gscServiceAccountKeyFile)),
+            ga4: options.ga4,
+            ...(options.ga4Property ? { ga4Property: options.ga4Property } : {}),
+            ...(options.ga4Days !== null ? { ga4Days: options.ga4Days } : {}),
+            ...mapToGa4Creds(resolveGoogleCredentialOptions(options.ga4ServiceAccountKeyFile)),
             render: options.render,
             ...(options.renderTimeoutMs ? { renderTimeoutMs: options.renderTimeoutMs } : {}),
             retries: options.retries,
