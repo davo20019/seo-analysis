@@ -48,6 +48,22 @@ inputs:
     description: "Service-account JSON for GSC (use a repo secret). Service-account email must have GSC property access."
     required: false
     default: ""
+  ga4:
+    description: "Enrich crawled pages with Google Analytics 4 metrics (true|false). Requires ga4-service-account-key (or reuses gsc-service-account-key)."
+    required: false
+    default: "false"
+  ga4-property:
+    description: "GA4 property identifier (e.g. properties/123456789). Auto-detected when blank."
+    required: false
+    default: ""
+  ga4-days:
+    description: "Days of GA4 history to query. Default 90."
+    required: false
+    default: ""
+  ga4-service-account-key:
+    description: "Service-account JSON for GA4. If blank, falls back to gsc-service-account-key (same SA can read both)."
+    required: false
+    default: ""
   crux-api-key:
     description: "Google API key for CrUX. Use a repo secret."
     required: false
@@ -121,7 +137,10 @@ runs:
         SEO_INPUT_GSC: ${{ inputs.gsc }}
         SEO_INPUT_GSC_PROPERTY: ${{ inputs.gsc-property }}
         SEO_INPUT_GSC_DAYS: ${{ inputs.gsc-days }}
-        GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ inputs.gsc-service-account-key }}
+        SEO_INPUT_GA4: ${{ inputs.ga4 }}
+        SEO_INPUT_GA4_PROPERTY: ${{ inputs.ga4-property }}
+        SEO_INPUT_GA4_DAYS: ${{ inputs.ga4-days }}
+        GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ inputs.ga4-service-account-key != '' && inputs.ga4-service-account-key || inputs.gsc-service-account-key }}
         SEO_INPUT_USER_AGENT: ${{ inputs.user-agent }}
         SEO_INPUT_INCLUDE_PATHS: ${{ inputs.include-paths }}
         SEO_INPUT_EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
@@ -155,6 +174,15 @@ runs:
         fi
         if [ -n "$SEO_INPUT_GSC_DAYS" ]; then
           ARGS+=("--gsc-days" "$SEO_INPUT_GSC_DAYS")
+        fi
+        if [ "$SEO_INPUT_GA4" = "true" ]; then
+          ARGS+=("--ga4")
+        fi
+        if [ -n "$SEO_INPUT_GA4_PROPERTY" ]; then
+          ARGS+=("--ga4-property" "$SEO_INPUT_GA4_PROPERTY")
+        fi
+        if [ -n "$SEO_INPUT_GA4_DAYS" ]; then
+          ARGS+=("--ga4-days" "$SEO_INPUT_GA4_DAYS")
         fi
         if [ -n "$SEO_INPUT_USER_AGENT" ]; then
           ARGS+=("--user-agent" "$SEO_INPUT_USER_AGENT")
