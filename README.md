@@ -18,7 +18,7 @@ It focuses on technical SEO issues that can be derived from the crawl itself, wi
 - `noindex` directives
 - images without alt text
 - exact missing Open Graph fields
-- missing JSON-LD schema presence
+- missing or invalid JSON-LD structured data
 - low body word count
 - pages with no crawlable internal links
 - internal links with missing anchor text
@@ -39,6 +39,8 @@ It focuses on technical SEO issues that can be derived from the crawl itself, wi
 - missing Strict-Transport-Security, missing Content-Type, or overly defensive Cache-Control on HTTP responses
 - `X-Robots-Tag` noindex/nofollow directives delivered via HTTP response headers
 - URLs explicitly disallowed by `robots.txt` for the configured user agent
+- JSON-LD validation against rich-result requirements: Product, Article (BlogPosting/NewsArticle), FAQPage, BreadcrumbList, Organization, LocalBusiness
+- JSON-LD Product offers without `price` or `priceCurrency`
 
 ## Quick Start
 
