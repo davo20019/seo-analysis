@@ -182,6 +182,39 @@ The same credentials work for any future Google integration (e.g. a future `--ga
 
 Optional flags: `--gsc-property` to override property auto-detection (URL-prefix or `sc-domain:example.com`), `--gsc-days` to change the lookback window (default 90).
 
+### Google Analytics 4 enrichment (`--ga4`)
+
+Merges per-page sessions, pageviews, users, and engagement rate from the GA4
+Data API into the crawl report. Useful when you want to know which pages get
+real traffic — not just search impressions — and prioritize technical-issue
+remediation accordingly.
+
+**Setup** (one-time, ~30 seconds if `--gsc-setup` has already run):
+
+1. If you haven't already run `seo-audit --gsc-setup`, run it now. It creates
+   a service account and downloads its JSON key. The same SA is reused for
+   GA4 — no second key needed.
+2. Open your GA4 property → **Admin → Property Access Management**.
+3. Click **+** → **Add users**. Paste the service-account email
+   (visible in `~/.config/seo-audit/gsc-key.json` under `client_email`).
+4. Set **Direct roles** to **Viewer**. Save.
+5. Run:
+
+   ```sh
+   GOOGLE_APPLICATION_CREDENTIALS=~/.config/seo-audit/gsc-key.json \
+     seo-audit https://your-site.com --gsc --ga4
+   ```
+
+The CLI auto-detects the GA4 property by matching the crawl origin against
+each accessible property's web data stream `defaultUri`. If multiple
+properties match (e.g., separate prod/staging streams for the same domain),
+the audit fails with the candidate list — pass `--ga4-property properties/N`
+to disambiguate.
+
+**Priority issues** are ranked by GSC impressions when `--gsc` is enabled,
+with GA4 sessions as a fallback when GSC is unavailable. The HTML report
+shows a "via GSC" / "via GA4" badge per row.
+
 The `--agent-readiness` flag adds an opinionated rubric (inspired by [Cloudflare's agent-readiness framework](https://blog.cloudflare.com/agent-readiness/)) covering four buckets:
 
 - **Discoverability** — robots.txt, sitemap.xml, `Link:` HTTP headers (RFC 8288).
@@ -261,6 +294,10 @@ jobs:
 | `gsc-property` | (auto-detect) | Override GSC property (URL-prefix or `sc-domain:example.com`) |
 | `gsc-days` | `90` | Days of GSC history to query |
 | `gsc-service-account-key` | (none) | Service-account JSON for GSC (use a repo secret); the SA email needs Restricted access on the property |
+| `ga4` | `false` | Enrich crawled pages with Google Analytics 4 metrics (sessions, pageviews, users, engagement rate) |
+| `ga4-property` | (auto-detect) | Override property auto-detection (e.g. `properties/123456789`) |
+| `ga4-days` | `90` | Days of GA4 data to query |
+| `ga4-service-account-key` | (none) | Service-account JSON for GA4 (use a repo secret); the SA email needs Viewer role on the property |
 | `user-agent` | (default) | Override the crawler's User-Agent |
 | `include-paths` | (none) | Comma-separated regex; only crawl matching URLs |
 | `exclude-paths` | (none) | Comma-separated regex; skip matching URLs |
@@ -334,6 +371,23 @@ This tool does not collect telemetry. No analytics, no phone-home, no install tr
 - Optional: Chromium downloads from Microsoft's Playwright CDN on first install
 
 If a future version ever adds opt-in telemetry, it will be exactly that — opt-in, with explicit disclosure.
+
+## CHANGELOG
+
+### Unreleased
+
+- **Added:** `--ga4` flag and supporting `--ga4-property`, `--ga4-days`,
+  `--ga4-service-account-key-file` options. Enriches each crawled page with
+  GA4 sessions, pageviews, users, and engagement rate; reuses the
+  service-account workflow set up by `--gsc-setup`.
+- **Changed:** `summary.priorityIssues[]` entries now carry `rankedBy`,
+  `rankValue`, and `metrics` fields; the GSC-specific `impressions`, `clicks`,
+  and `position` fields are kept populated for one minor cycle (deprecated).
+- **Changed:** `summary.priorityIssues` is now built whenever GSC **or** GA4
+  enrichment succeeds (previously only when GSC succeeded).
+- **Added:** `report.ga4` enrichment-result summary alongside `report.gsc`.
+- **Added:** `page.metrics.ga4` per-page GA4 metrics alongside
+  `page.metrics.gsc`.
 
 ## License
 
