@@ -205,6 +205,114 @@ describe("Ga4EnrichmentSource Admin-API auto-resolve", () => {
       /--ga4-property/,
     );
   });
+
+  it("returns parsed metrics keyed by canonical URL on the happy path", async () => {
+    const mockFetch: typeof fetch = async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.startsWith("https://oauth2.googleapis.com/token")) {
+        return jsonResponse({ access_token: "fake-token", expires_in: 3600 });
+      }
+      if (url.includes(":runReport")) {
+        return jsonResponse({
+          rows: [
+            {
+              dimensionValues: [{ value: "https://example.com/foo" }],
+              metricValues: [{ value: "10" }, { value: "20" }, { value: "8" }, { value: "0.7" }],
+            },
+          ],
+          rowCount: 1,
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+    const source = new Ga4EnrichmentSource({
+      property: "properties/999",
+      auth: new GoogleServiceAccountAuth({ json: testServiceAccountJson() }, mockFetch),
+      fetcher: mockFetch,
+    });
+    const map = await source.fetch("https://example.com", "https://example.com/");
+    expect(source.lastResult?.totalRows).toBe(1);
+    const entry = map.get("https://example.com/foo");
+    expect(entry).toEqual({
+      sessions: 10,
+      screenPageViews: 20,
+      totalUsers: 8,
+      engagementRate: 0.7,
+    });
+  });
+
+  it("paginates the Data API runReport via offset until rowCount is reached", async () => {
+    let runReportCalls = 0;
+    const mockFetch: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.startsWith("https://oauth2.googleapis.com/token")) {
+        return jsonResponse({ access_token: "fake-token", expires_in: 3600 });
+      }
+      if (url.includes(":runReport")) {
+        runReportCalls += 1;
+        const body = JSON.parse((init?.body as string) ?? "{}");
+        const offset = body.offset ?? 0;
+        // Page 1: 100k rows + rowCount: 150000
+        // Page 2: 50k rows
+        if (offset === 0) {
+          return jsonResponse({
+            rows: Array.from({ length: 100_000 }, (_, i) => ({
+              dimensionValues: [{ value: `https://example.com/p${i}` }],
+              metricValues: [{ value: "1" }, { value: "1" }, { value: "1" }, { value: "0.5" }],
+            })),
+            rowCount: 150_000,
+          });
+        }
+        return jsonResponse({
+          rows: Array.from({ length: 50_000 }, (_, i) => ({
+            dimensionValues: [{ value: `https://example.com/q${i}` }],
+            metricValues: [{ value: "1" }, { value: "1" }, { value: "1" }, { value: "0.5" }],
+          })),
+          rowCount: 150_000,
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+
+    const source = new Ga4EnrichmentSource({
+      property: "properties/999",
+      auth: new GoogleServiceAccountAuth({ json: testServiceAccountJson() }, mockFetch),
+      fetcher: mockFetch,
+    });
+    const map = await source.fetch("https://example.com", "https://example.com/");
+    expect(runReportCalls).toBe(2);
+    expect(source.lastResult?.totalRows).toBe(150_000);
+    expect(map.size).toBeGreaterThanOrEqual(150_000);
+  });
+
+  it("canonicalizes URLs the same way GSC does (utm-stripping, case)", async () => {
+    const mockFetch: typeof fetch = async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.startsWith("https://oauth2.googleapis.com/token")) {
+        return jsonResponse({ access_token: "fake-token", expires_in: 3600 });
+      }
+      if (url.includes(":runReport")) {
+        return jsonResponse({
+          rows: [
+            {
+              dimensionValues: [{ value: "https://Example.com/page/?utm_source=x" }],
+              metricValues: [{ value: "5" }, { value: "12" }, { value: "4" }, { value: "0.6" }],
+            },
+          ],
+          rowCount: 1,
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+    const source = new Ga4EnrichmentSource({
+      property: "properties/999",
+      auth: new GoogleServiceAccountAuth({ json: testServiceAccountJson() }, mockFetch),
+      fetcher: mockFetch,
+    });
+    const map = await source.fetch("https://example.com", "https://example.com/");
+    // canonicalizeForMatch lowercases host, strips utm_*, keeps trailing slash
+    expect(map.has("https://example.com/page/")).toBe(true);
+  });
 });
 
 function jsonResponse(body: unknown): Response {

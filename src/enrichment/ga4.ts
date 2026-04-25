@@ -51,28 +51,9 @@ export class Ga4EnrichmentSource implements EnrichmentSource<Ga4PageMetrics> {
     const endDate = formatDate(new Date());
     const startDate = formatDate(new Date(Date.now() - days * 24 * 60 * 60 * 1000));
 
-    // Stub data fetch — Task 5 fills this in.
-    const runReportUrl = `${DATA_API_BASE}/${property}:runReport`;
-    await fetcher(runReportUrl, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${accessToken}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        dateRanges: [{ startDate, endDate }],
-        dimensions: [{ name: "pagePath" }],
-        metrics: [
-          { name: "sessions" },
-          { name: "screenPageViews" },
-          { name: "activeUsers" },
-          { name: "bounceRate" },
-        ],
-        limit: 10000,
-      }),
-    });
-    const metrics = new Map<string, Ga4PageMetrics>();
-    this.lastResult = { property, startDate, endDate, totalRows: 0, metrics };
+    const rows = await queryAllRows(property, startDate, endDate, accessToken, fetcher);
+    const metrics = buildMetricsMap(rows);
+    this.lastResult = { property, startDate, endDate, totalRows: rows.length, metrics };
     return metrics;
   }
 }
@@ -164,6 +145,90 @@ async function listWebDataStreams(
 
 function formatDate(date: Date): string {
   return date.toISOString().slice(0, 10);
+}
+
+interface Ga4Row {
+  dimensionValues?: Array<{ value?: string }>;
+  metricValues?: Array<{ value?: string }>;
+}
+
+async function queryAllRows(
+  property: string,
+  startDate: string,
+  endDate: string,
+  accessToken: string,
+  fetcher: typeof fetch,
+): Promise<Ga4Row[]> {
+  const PAGE_SIZE = 100_000;
+  const MAX_TOTAL_ROWS = 100_000_000;
+  const allRows: Ga4Row[] = [];
+  let offset = 0;
+  let total = Infinity;
+
+  while (allRows.length < total && allRows.length < MAX_TOTAL_ROWS) {
+    const url = `${DATA_API_BASE}/${property}:runReport`;
+    const response = await fetcher(url, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        dateRanges: [{ startDate, endDate }],
+        dimensions: [{ name: "pageLocation" }],
+        metrics: [
+          { name: "sessions" },
+          { name: "screenPageViews" },
+          { name: "totalUsers" },
+          { name: "engagementRate" },
+        ],
+        limit: PAGE_SIZE,
+        offset,
+        keepEmptyRows: false,
+      }),
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw mapDataApiError(response.status, text, property);
+    }
+    const body = (await response.json()) as { rows?: Ga4Row[]; rowCount?: number };
+    const rows = body.rows ?? [];
+    allRows.push(...rows);
+    if (typeof body.rowCount === "number") total = body.rowCount;
+    if (rows.length < PAGE_SIZE) break;
+    offset += rows.length;
+  }
+  return allRows;
+}
+
+function buildMetricsMap(rows: Ga4Row[]): Map<string, Ga4PageMetrics> {
+  const entries: Array<[string, Ga4PageMetrics]> = [];
+  for (const row of rows) {
+    const url = row.dimensionValues?.[0]?.value;
+    if (!url) continue;
+    const m = row.metricValues ?? [];
+    entries.push([
+      url,
+      {
+        sessions: parseNum(m[0]?.value),
+        screenPageViews: parseNum(m[1]?.value),
+        totalUsers: parseNum(m[2]?.value),
+        engagementRate: parseNum(m[3]?.value),
+      },
+    ]);
+  }
+  return indexByCanonicalUrl(entries);
+}
+
+function parseNum(value: string | undefined): number {
+  if (value === undefined) return 0;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function mapDataApiError(status: number, body: string, property: string): Error {
+  // Filled in by Task 6 — for now, a generic error with the body.
+  return new Error(`GA4 Data API failed (${status}) for ${property}: ${body}`);
 }
 
 export function pickBestGa4Property(origin: string, candidates: Ga4PropertyCandidate[]): PickResult {
