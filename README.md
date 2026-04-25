@@ -97,6 +97,7 @@ npm run dev -- https://example.com --render --max-pages 5
 Notes on `--render`:
 - First `npm install` auto-downloads Chromium (~300MB). To skip (e.g. CI), set `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` and run `npx playwright install chromium` later.
 - Rendering is slower than raw fetch (typical: 2–10s per page). Use `--max-pages` to scope.
+- Render uses `--retries` (default 3) with exponential backoff on transient failures (navigation timeouts, ad-script hangs).
 - Known limitation: `redirectChain` is not captured for rendered pages in v1. The `finalUrl` is still accurate.
 
 ```bash
