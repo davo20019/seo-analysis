@@ -9,12 +9,14 @@ interface CliOptions {
   crux: boolean;
   excludePathPatterns: string[];
   fullSitemap: boolean;
+  htmlReportPath: string | null;
   includePathPatterns: string[];
   json: boolean;
   lighthouse: boolean;
   lighthousePages: number;
   maxPages: number;
   outputPath: string | null;
+  pdfReportPath: string | null;
   keywords: string[];
   keywordFile: string | null;
   extractTerms: boolean;
@@ -58,6 +60,8 @@ Options:
   --from-directory <path>   Search local HTML files instead of crawling
   --json                     Print raw JSON instead of a text report
   --output <file>            Write the final report to a file
+  --html-report <file>       Write a polished HTML report to <file>
+  --pdf-report <file>        Write a PDF report to <file> (uses Playwright/Chromium)
   --user-agent <string>      Override the HTTP User-Agent sent by the crawler
   --help                     Show this help
 
@@ -111,12 +115,14 @@ function parseArgs(argv: string[]): CliOptions {
     crux: false,
     excludePathPatterns: [],
     fullSitemap: false,
+    htmlReportPath: null,
     includePathPatterns: [],
     json: false,
     lighthouse: false,
     lighthousePages: 1,
     maxPages: 10,
     outputPath: null,
+    pdfReportPath: null,
     keywords: [],
     keywordFile: null,
     extractTerms: false,
@@ -300,6 +306,28 @@ function parseArgs(argv: string[]): CliOptions {
 
     if (arg.startsWith("--user-agent=")) {
       options.userAgent = arg.split("=").slice(1).join("=");
+      continue;
+    }
+
+    if (arg === "--html-report") {
+      options.htmlReportPath = requireValue(argv, index, "--html-report");
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--html-report=")) {
+      options.htmlReportPath = arg.split("=").slice(1).join("=");
+      continue;
+    }
+
+    if (arg === "--pdf-report") {
+      options.pdfReportPath = requireValue(argv, index, "--pdf-report");
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--pdf-report=")) {
+      options.pdfReportPath = arg.split("=").slice(1).join("=");
       continue;
     }
 
@@ -662,6 +690,26 @@ async function main(): Promise<void> {
       : reports.map(formatTextReport).join("\n\n");
 
     await maybeWriteOutput(options.outputPath, output);
+
+    if (options.htmlReportPath) {
+      const { renderHtmlReport } = await import("./report.js");
+      const html = reports.length === 1
+        ? renderHtmlReport(reports[0])
+        : reports.map(renderHtmlReport).join("\n<hr>\n");
+      await writeFile(options.htmlReportPath, html, "utf8");
+      console.error(`HTML report written to ${options.htmlReportPath}`);
+    }
+
+    if (options.pdfReportPath) {
+      if (reports.length !== 1) {
+        throw new Error(`--pdf-report requires exactly one URL (got ${reports.length}).`);
+      }
+      const { renderPdfReport } = await import("./report.js");
+      const buf = await renderPdfReport(reports[0]);
+      await writeFile(options.pdfReportPath, buf);
+      console.error(`PDF report written to ${options.pdfReportPath}`);
+    }
+
     console.log(output);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown CLI error";

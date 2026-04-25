@@ -108,6 +108,17 @@ Notes on `--render`:
 CRUX_API_KEY=your-google-api-key npm run dev -- https://example.com --crux --max-pages 5
 ```
 
+```bash
+# Generate a polished HTML report (open in any browser, email to a client)
+npm run dev -- https://example.com --max-pages 25 --html-report report.html
+
+# Generate a PDF report (uses Playwright/Chromium under the hood)
+npm run dev -- https://example.com --max-pages 25 --pdf-report report.pdf
+
+# Generate both at once
+npm run dev -- https://example.com --max-pages 25 --html-report report.html --pdf-report report.pdf
+```
+
 ## Keyword Search
 
 Search for specific keywords across a site:
