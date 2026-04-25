@@ -163,3 +163,38 @@ export function validateBreadcrumb(obj: JsonLdObject): Issue[] {
   }
   return issues;
 }
+
+export function validateOrganization(obj: JsonLdObject): Issue[] {
+  const issues: Issue[] = [];
+  if (!isPresent(obj.name)) {
+    issues.push(makeIssue("SCHEMA_ORG_MISSING_NAME", "medium",
+      "Organization schema is missing `name`.",
+      "Add a `name` property identifying the organization."));
+  }
+  if (!isPresent(obj.url)) {
+    issues.push(makeIssue("SCHEMA_ORG_MISSING_URL", "low",
+      "Organization schema is missing `url`.",
+      "Add a `url` property pointing to the canonical home page."));
+  }
+  if (!isPresent(obj.logo)) {
+    issues.push(makeIssue("SCHEMA_ORG_MISSING_LOGO", "medium",
+      "Organization schema is missing `logo` — required for many rich-result surfaces.",
+      "Add a `logo` URL (or an ImageObject)."));
+  }
+  return issues;
+}
+
+export function validateLocalBusiness(obj: JsonLdObject): Issue[] {
+  const issues: Issue[] = validateOrganization(obj);
+  if (!isPresent(obj.address)) {
+    issues.push(makeIssue("SCHEMA_LOCALBUSINESS_MISSING_ADDRESS", "medium",
+      "LocalBusiness schema is missing `address`.",
+      "Add a PostalAddress object with at least streetAddress, addressLocality, addressCountry."));
+  }
+  if (!isPresent(obj.telephone) && !isPresent(obj.contactPoint)) {
+    issues.push(makeIssue("SCHEMA_LOCALBUSINESS_MISSING_TELEPHONE", "medium",
+      "LocalBusiness schema is missing a contact channel (`telephone` or `contactPoint`).",
+      "Add a `telephone` field or a `contactPoint` object."));
+  }
+  return issues;
+}

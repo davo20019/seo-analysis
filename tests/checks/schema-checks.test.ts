@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseJsonLd, validateProduct, validateArticle, validateFaq, validateBreadcrumb } from "../../src/checks/schema-checks.js";
+import { parseJsonLd, validateProduct, validateArticle, validateFaq, validateBreadcrumb, validateOrganization, validateLocalBusiness } from "../../src/checks/schema-checks.js";
 
 describe("parseJsonLd", () => {
   it("parses a single object script", () => {
@@ -140,6 +140,62 @@ describe("validateBreadcrumb", () => {
         { "@type": "ListItem", position: 1, name: "Home", item: "https://x.com/" },
         { "@type": "ListItem", position: 2, name: "Products", item: "https://x.com/p" },
       ],
+    })).toEqual([]);
+  });
+});
+
+describe("validateOrganization", () => {
+  it("flags missing name", () => {
+    const issues = validateOrganization({ "@type": "Organization" });
+    expect(issues.map((i) => i.code)).toContain("SCHEMA_ORG_MISSING_NAME");
+  });
+
+  it("flags missing logo", () => {
+    const issues = validateOrganization({ "@type": "Organization", name: "Acme", url: "https://acme" });
+    expect(issues.map((i) => i.code)).toContain("SCHEMA_ORG_MISSING_LOGO");
+  });
+
+  it("accepts a complete Organization", () => {
+    expect(validateOrganization({
+      "@type": "Organization",
+      name: "Acme",
+      url: "https://acme.com",
+      logo: "https://acme.com/logo.png",
+    })).toEqual([]);
+  });
+});
+
+describe("validateLocalBusiness", () => {
+  it("flags missing address", () => {
+    const issues = validateLocalBusiness({
+      "@type": "LocalBusiness",
+      name: "Diner",
+      url: "https://d",
+      logo: "https://d/l",
+      telephone: "+1-555",
+    });
+    expect(issues.map((i) => i.code)).toContain("SCHEMA_LOCALBUSINESS_MISSING_ADDRESS");
+  });
+
+  it("flags missing telephone", () => {
+    const issues = validateLocalBusiness({
+      "@type": "LocalBusiness",
+      name: "Diner",
+      url: "https://d",
+      logo: "https://d/l",
+      address: { "@type": "PostalAddress", streetAddress: "1 Main", addressLocality: "Town", addressCountry: "US" },
+    });
+    expect(issues.map((i) => i.code)).toContain("SCHEMA_LOCALBUSINESS_MISSING_TELEPHONE");
+  });
+
+  it("accepts a complete LocalBusiness", () => {
+    expect(validateLocalBusiness({
+      "@type": "LocalBusiness",
+      name: "Diner",
+      url: "https://d",
+      logo: "https://d/l",
+      address: { "@type": "PostalAddress", streetAddress: "1 Main", addressLocality: "Town", addressCountry: "US" },
+      telephone: "+1-555-1234",
     })).toEqual([]);
   });
 });
