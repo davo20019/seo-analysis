@@ -48,6 +48,7 @@ It focuses on technical SEO issues that can be derived from the crawl itself, wi
 - sitemap entries with `lastmod` older than 12 months
 - real-user Core Web Vitals from Google CrUX (LCP/INP/CLS p75) when `--crux` is enabled and `CRUX_API_KEY` is set
 - optional AI-agent readiness scoring (`--agent-readiness`) covering AI-bot rules, llms.txt depth, `llms-full.txt`, markdown content negotiation, well-known endpoints (`agent-skills`, `api-catalog`, `mcp/server-card`, OAuth discovery), Web Bot Auth, and `Link:` headers
+- optional Google Search Console enrichment (`--gsc`) merging clicks/impressions/CTR/avg-position per crawled URL, plus a "Priority issues" summary that ranks high/medium-severity issues by traffic exposure
 
 ## Install
 
@@ -145,6 +146,42 @@ CRUX_API_KEY=your-google-api-key npm run dev -- https://example.com --crux --max
 npm run dev -- https://example.com --agent-readiness --max-pages 25
 ```
 
+```bash
+# Enrich with Google Search Console traffic data (priority-rank issues by impressions)
+GOOGLE_APPLICATION_CREDENTIALS=./gsc-service-account.json \
+  npm run dev -- https://example.com --gsc --max-pages 100
+```
+
+The `--gsc` flag pulls clicks, impressions, CTR, and average position from Search Console for every crawled URL and adds a **Priority issues** section to the summary — high/medium-severity issues sorted by impressions, so the audit answers "which problem affects pages that actually get traffic?" rather than just "what problems exist?".
+
+**Auth** uses a Google Cloud service account (no OAuth browser flow, no token caching). The fastest way to set it up is the bundled wizard:
+
+```bash
+seo-audit --gsc-setup https://your-site.com
+```
+
+The wizard:
+- Detects `gcloud` and (if present) creates the service account, downloads the key to `~/.config/seo-audit/gsc-key.json`, and chmods it `600`.
+- Falls back to printed step-by-step instructions if `gcloud` isn't available.
+- Prints the service-account email to grant in Search Console (Settings → Users and permissions → Add user → Restricted).
+- Verifies the credentials by exchanging them for a real access token before declaring success.
+
+After setup, every subsequent run is silent:
+
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS=~/.config/seo-audit/gsc-key.json
+seo-audit https://your-site.com --gsc
+```
+
+If you prefer manual setup or are running in CI, the auth layer also accepts:
+- `GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json` (file path)
+- `GOOGLE_APPLICATION_CREDENTIALS_JSON='{...inline json...}'` (CI-friendly, one secret)
+- `--gsc-service-account-key-file /path/to/key.json` (CLI override)
+
+The same credentials work for any future Google integration (e.g. a future `--ga4`).
+
+Optional flags: `--gsc-property` to override property auto-detection (URL-prefix or `sc-domain:example.com`), `--gsc-days` to change the lookback window (default 90).
+
 The `--agent-readiness` flag adds an opinionated rubric (inspired by [Cloudflare's agent-readiness framework](https://blog.cloudflare.com/agent-readiness/)) covering four buckets:
 
 - **Discoverability** — robots.txt, sitemap.xml, `Link:` HTTP headers (RFC 8288).
@@ -220,6 +257,10 @@ jobs:
 | `crux` | `false` | Query Google CrUX for real-user Core Web Vitals |
 | `crux-api-key` | (none) | API key for CrUX (use a repo secret) |
 | `agent-readiness` | `false` | Score AI-agent readiness (llms.txt depth, AI-bot rules, well-known endpoints) |
+| `gsc` | `false` | Enrich crawled pages with Google Search Console clicks/impressions/CTR/position |
+| `gsc-property` | (auto-detect) | Override GSC property (URL-prefix or `sc-domain:example.com`) |
+| `gsc-days` | `90` | Days of GSC history to query |
+| `gsc-service-account-key` | (none) | Service-account JSON for GSC (use a repo secret); the SA email needs Restricted access on the property |
 | `user-agent` | (default) | Override the crawler's User-Agent |
 | `include-paths` | (none) | Comma-separated regex; only crawl matching URLs |
 | `exclude-paths` | (none) | Comma-separated regex; skip matching URLs |

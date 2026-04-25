@@ -5,8 +5,10 @@ import { scanDirectory } from "./directory-scanner.js";
 import type {
   AgentReadinessReport,
   DuplicateGroup,
+  GscEnrichmentReport,
   KeywordSummary,
   LighthouseReport,
+  PrioritySummaryEntry,
   SiteReport,
   TermFrequency
 } from "./types.js";
@@ -15,6 +17,11 @@ interface CliOptions {
   agentReadiness: boolean;
   concurrency: number | null;
   crux: boolean;
+  gsc: boolean;
+  gscProperty: string | null;
+  gscDays: number | null;
+  gscServiceAccountKeyFile: string | null;
+  gscSetup: boolean;
   excludePathPatterns: string[];
   fullSitemap: boolean;
   htmlReportPath: string | null;
@@ -67,6 +74,11 @@ Options:
   --lighthouse-pages <n>     Number of crawled pages to send through Lighthouse. Default: 1
   --crux                     Query Google's CrUX API for real-user Core Web Vitals (requires CRUX_API_KEY env var)
   --agent-readiness          Score how prepared the site is for AI agent crawlers (llms.txt depth, AI-bot rules, well-known endpoints)
+  --gsc                      Enrich crawled pages with Google Search Console clicks/impressions/CTR/position (service-account auth)
+  --gsc-property <url>       Override GSC property auto-detection (URL-prefix or sc-domain:example.com)
+  --gsc-days <n>             Days of GSC data to query. Default: 90
+  --gsc-service-account-key-file <path>  Path to service-account JSON (overrides GOOGLE_APPLICATION_CREDENTIALS env var)
+  --gsc-setup                Interactive wizard to create a GSC service account and print the next steps
   --render                   Render pages with headless Chromium (Playwright) instead of raw fetch — needed for SPAs and JS-challenge sites
   --render-timeout-ms <n>    Timeout per page render in milliseconds (default: 30000)
   --keyword <term>          Search for this keyword in crawled pages (repeatable)
@@ -131,6 +143,11 @@ function parseArgs(argv: string[]): CliOptions {
     agentReadiness: false,
     concurrency: null,
     crux: false,
+    gsc: false,
+    gscProperty: null,
+    gscDays: null,
+    gscServiceAccountKeyFile: null,
+    gscSetup: false,
     excludePathPatterns: [],
     fullSitemap: false,
     htmlReportPath: null,
@@ -233,6 +250,49 @@ function parseArgs(argv: string[]): CliOptions {
 
     if (arg === "--agent-readiness") {
       options.agentReadiness = true;
+      continue;
+    }
+
+    if (arg === "--gsc") {
+      options.gsc = true;
+      continue;
+    }
+
+    if (arg === "--gsc-setup") {
+      options.gscSetup = true;
+      continue;
+    }
+
+    if (arg === "--gsc-property") {
+      options.gscProperty = requireValue(argv, index, "--gsc-property");
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--gsc-property=")) {
+      options.gscProperty = arg.split("=").slice(1).join("=");
+      continue;
+    }
+
+    if (arg === "--gsc-days") {
+      options.gscDays = parseNumberValue(requireValue(argv, index, "--gsc-days"), "--gsc-days");
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--gsc-days=")) {
+      options.gscDays = parseNumberValue(arg.split("=")[1] ?? "", "--gsc-days");
+      continue;
+    }
+
+    if (arg === "--gsc-service-account-key-file") {
+      options.gscServiceAccountKeyFile = requireValue(argv, index, "--gsc-service-account-key-file");
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--gsc-service-account-key-file=")) {
+      options.gscServiceAccountKeyFile = arg.split("=").slice(1).join("=");
       continue;
     }
 
@@ -452,7 +512,9 @@ function parseArgs(argv: string[]): CliOptions {
     options.urls.push(arg);
   }
 
-  if (options.fromDirectory) {
+  if (options.gscSetup) {
+    // Setup wizard short-circuits before crawl validation; URL is optional.
+  } else if (options.fromDirectory) {
     if (options.keywords.length === 0 && !options.keywordFile && !options.extractTerms) {
       throw new Error(
         "Use --from-directory with --keyword, --keyword-file, or --extract-terms."
@@ -516,6 +578,21 @@ async function loadKeywords(
   }
 
   return [...new Set(keywords)];
+}
+
+function resolveGscCredentialOptions(
+  cliFilePath: string | null,
+): { gscServiceAccountKey?: string; gscServiceAccountKeyFile?: string } {
+  const inlineJson =
+    process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON ?? process.env.GSC_SERVICE_ACCOUNT_KEY ?? null;
+  if (inlineJson && inlineJson.trim().length > 0) {
+    return { gscServiceAccountKey: inlineJson.trim() };
+  }
+  const filePath = cliFilePath ?? process.env.GOOGLE_APPLICATION_CREDENTIALS ?? null;
+  if (filePath && filePath.trim().length > 0) {
+    return { gscServiceAccountKeyFile: filePath.trim() };
+  }
+  return {};
 }
 
 function truncate(value: string, maxLength: number): string {
@@ -607,6 +684,28 @@ function formatKeywordSummary(summary: KeywordSummary[]): string[] {
     );
   }
 
+  return lines;
+}
+
+function formatGscEnrichment(gsc: GscEnrichmentReport): string[] {
+  if (gsc.error) {
+    return ["", `GSC enrichment: ${gsc.error}`];
+  }
+  return [
+    "",
+    `GSC enrichment: property=${gsc.property} window=${gsc.startDate}..${gsc.endDate}`,
+    `  rows fetched: ${gsc.totalRows}, matched to crawled pages: ${gsc.matchedPages}, unmatched: ${gsc.unmatchedRows}`
+  ];
+}
+
+function formatPriorityIssues(entries: PrioritySummaryEntry[]): string[] {
+  if (entries.length === 0) return [];
+  const lines = ["", "Priority issues (high/medium severity on pages with GSC traffic):"];
+  for (const e of entries) {
+    lines.push(
+      `  [${e.severity}] ${e.code} — ${e.url} (impr=${e.impressions}, clicks=${e.clicks}, pos=${e.position.toFixed(1)})`
+    );
+  }
   return lines;
 }
 
@@ -715,6 +814,11 @@ function formatPage(page: SiteReport["pages"][number]): string {
     `  top_issues=${issuePreview}`
   ];
 
+  const gsc = page.metrics?.gsc;
+  if (gsc) {
+    lines.splice(2, 0, `  gsc impressions=${gsc.impressions} clicks=${gsc.clicks} ctr=${(gsc.ctr * 100).toFixed(1)}% pos=${gsc.position.toFixed(1)}`);
+  }
+
   if (page.url !== page.finalUrl) {
     lines.splice(1, 0, `  requested=${page.url}`);
   }
@@ -764,6 +868,14 @@ function formatTextReport(report: SiteReport): string {
     lines.push(...formatAgentReadiness(report.agentReadiness));
   }
 
+  if (report.gsc) {
+    lines.push(...formatGscEnrichment(report.gsc));
+  }
+
+  if (report.summary.priorityIssues && report.summary.priorityIssues.length > 0) {
+    lines.push(...formatPriorityIssues(report.summary.priorityIssues));
+  }
+
   if (report.keywordSummary) {
     lines.push(...formatKeywordSummary(report.keywordSummary));
   }
@@ -786,6 +898,12 @@ async function maybeWriteOutput(outputPath: string | null, contents: string): Pr
 async function main(): Promise<void> {
   try {
     const options = parseArgs(process.argv.slice(2));
+
+    if (options.gscSetup) {
+      const { runGscSetup } = await import("./gsc-setup.js");
+      await runGscSetup(options.urls[0]);
+      return;
+    }
 
     if (options.diffMode) {
       if (!options.diffOldPath || !options.diffNewPath) {
@@ -844,6 +962,10 @@ async function main(): Promise<void> {
             crux: options.crux,
             ...(process.env.CRUX_API_KEY ? { cruxApiKey: process.env.CRUX_API_KEY } : {}),
             agentReadiness: options.agentReadiness,
+            gsc: options.gsc,
+            ...(options.gscProperty ? { gscProperty: options.gscProperty } : {}),
+            ...(options.gscDays !== null ? { gscDays: options.gscDays } : {}),
+            ...resolveGscCredentialOptions(options.gscServiceAccountKeyFile),
             render: options.render,
             ...(options.renderTimeoutMs ? { renderTimeoutMs: options.renderTimeoutMs } : {}),
             retries: options.retries,

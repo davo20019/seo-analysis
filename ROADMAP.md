@@ -21,16 +21,18 @@ Target: match Screaming Frog / Sitebulb on technical SEO coverage.
 
 Estimated effort: 2–4 weeks.
 
-## Phase 2 — Data layer via DataForSEO
+## Phase 2 — Data layer
 
-Optional subcommands gated on an API-key env var. Users without a key still get full Phase 1 functionality.
+Optional subcommands gated on auth/API keys. Users without keys still get full Phase 1 functionality.
 
-- `--backlinks` — referring domains, anchor distribution, toxic-link flags.
-- `--keyword-volumes` — enrich extracted terms with search volume, CPC, difficulty.
-- `--serp-check --keyword "..."` — current SERP rank for target queries.
+- **`--gsc` (shipped)** — Google Search Console enrichment via service-account auth. Merges clicks/impressions/CTR/position per crawled URL and produces a "Priority issues" summary ranked by traffic exposure. Lives under `src/enrichment/` as a generic URL-keyed enrichment system that GA4 / Ahrefs / custom CSV adapters can plug into without rework.
+- `--ga4` — same pattern as `--gsc`, reusing the shared service-account auth and URL-match helpers; calls the GA4 Data API for sessions/engagement/conversions per URL.
+- `--backlinks` — referring domains, anchor distribution, toxic-link flags (DataForSEO).
+- `--keyword-volumes` — enrich extracted terms with search volume, CPC, difficulty (DataForSEO).
+- `--serp-check --keyword "..."` — current SERP rank for target queries (DataForSEO).
 - `--competitors domain1,domain2` — side-by-side audit against competitors.
 
-Estimated effort: 1–2 weeks.
+Estimated effort: 1–2 weeks per remaining adapter.
 
 ## Phase 3 — Monitoring and diffing
 
