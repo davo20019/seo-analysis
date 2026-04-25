@@ -139,12 +139,15 @@ npm run dev -- --from-directory ./site_backup --extract-terms
 ## Crawl Behavior
 
 - crawls up to `--max-pages` pages, or the full sitemap with `--full-sitemap`
-- fetches pages in parallel with `--concurrency` (default: 6)
-- retries slow or retryable requests with exponential backoff
+- fetches pages in parallel with `--concurrency` (run `--help` for the default)
+- retries slow or retryable requests with exponential backoff (also applies to `--render` on transient navigation failures)
 - deduplicates redirected pages by final URL
 - seeds the crawl queue from `sitemap.xml` automatically
+- walks one level of nested sitemap-index files (capped at 50 children)
 - supports `--include-path` and `--exclude-path` regex filters
 - samples representative sitemap URLs with `--sample-sitemap`
+- captures response headers per page for `X-Robots-Tag`, HSTS, Cache-Control, and Content-Type checks
+- optionally renders pages with headless Chromium via `--render` (Playwright) for SPAs and JS-challenge sites
 
 ## Notes And Limits
 
