@@ -37,6 +37,7 @@ const STYLES = `
   .badge.high { background: #fee2e2; color: #991b1b; }
   .badge.medium { background: #fef3c7; color: #92400e; }
   .badge.low { background: #e5e7eb; color: #374151; }
+  .badge.neutral { background: #e5e7eb; color: #4b5563; }
   details { margin: 8px 0; }
   details summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
   details ul { margin: 4px 0 12px; padding-left: 20px; }
@@ -123,7 +124,7 @@ function renderPriorityIssues(entries: PrioritySummaryEntry[]): string {
 <td><span class="badge ${e.severity}">${e.severity}</span></td>
 <td><code>${escapeHtml(e.code)}</code></td>
 <td><a href="${escapeHtml(e.url)}">${escapeHtml(e.url)}</a></td>
-<td><span class="badge low">via ${e.rankedBy.toUpperCase()}</span></td>
+<td><span class="badge neutral">via ${e.rankedBy.toUpperCase()}</span></td>
 ${metricCells}
 </tr>`;
     })
