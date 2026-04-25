@@ -2,7 +2,7 @@
 
 This project is a crawl-based SEO CLI for auditing websites.
 
-It focuses on technical SEO issues that can be derived from the crawl itself, with optional Lighthouse support for a small set of pages.
+It focuses on technical SEO issues that can be derived from the crawl itself, with optional headless-Chromium rendering (`--render`), Google CrUX field data (`--crux`), and Lighthouse audits for a small set of pages.
 
 ## What It Checks
 
@@ -85,6 +85,9 @@ npm run dev -- https://example.com --exclude-path '/tag/' --exclude-path '/page/
 
 # Add Lighthouse for a few representative pages
 npm run dev -- https://example.com --lighthouse --lighthouse-pages 3
+
+# Override the User-Agent string sent by the crawler
+npm run dev -- https://example.com --user-agent "Mozilla/5.0 (compatible; MyCrawler/1.0)"
 ```
 
 ```bash
@@ -97,6 +100,7 @@ npm run dev -- https://example.com --render --max-pages 5
 Notes on `--render`:
 - First `npm install` auto-downloads Chromium (~300MB). To skip (e.g. CI), set `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` and run `npx playwright install chromium` later.
 - Rendering is slower than raw fetch (typical: 2–10s per page). Use `--max-pages` to scope.
+- Render uses `--retries` (default 3) with exponential backoff on transient failures (navigation timeouts, ad-script hangs).
 - Known limitation: `redirectChain` is not captured for rendered pages in v1. The `finalUrl` is still accurate.
 
 ```bash
@@ -135,18 +139,22 @@ npm run dev -- --from-directory ./site_backup --extract-terms
 ## Crawl Behavior
 
 - crawls up to `--max-pages` pages, or the full sitemap with `--full-sitemap`
-- fetches pages in parallel with `--concurrency` (default: 6)
-- retries slow or retryable requests with exponential backoff
+- fetches pages in parallel with `--concurrency` (run `--help` for the default)
+- retries slow or retryable requests with exponential backoff (also applies to `--render` on transient navigation failures)
 - deduplicates redirected pages by final URL
 - seeds the crawl queue from `sitemap.xml` automatically
+- walks one level of nested sitemap-index files (capped at 50 children)
 - supports `--include-path` and `--exclude-path` regex filters
 - samples representative sitemap URLs with `--sample-sitemap`
+- captures response headers per page for `X-Robots-Tag`, HSTS, Cache-Control, and Content-Type checks
+- optionally renders pages with headless Chromium via `--render` (Playwright) for SPAs and JS-challenge sites
 
 ## Notes And Limits
 
 - `--sample-sitemap` is useful when you want representative sitemap coverage quickly, but link-graph findings are less complete because the crawl is intentionally sampled.
 - Sitemap reconciliation relies on the set of sitemap URLs the CLI was able to collect. The report marks sitemap coverage as partial when that set was truncated.
-- Structured data support is currently presence-based. The CLI detects JSON-LD types, but it does not yet perform full schema validation.
+- JSON-LD validation covers Google's rich-result requirements for Product, Article (BlogPosting/NewsArticle), FAQPage, BreadcrumbList, Organization, and LocalBusiness. Other schema types are still presence-only.
+- `--render` (Playwright/Chromium) handles SPAs and JS-challenge sites (Cloudflare turnstile, JS-rendered DOM) but `redirectChain` is not captured for rendered pages.
 
 ## License
 
