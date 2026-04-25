@@ -580,19 +580,29 @@ async function loadKeywords(
   return [...new Set(keywords)];
 }
 
-function resolveGscCredentialOptions(
+function resolveGoogleCredentialOptions(
   cliFilePath: string | null,
-): { gscServiceAccountKey?: string; gscServiceAccountKeyFile?: string } {
+): { key?: string; keyFile?: string } {
   const inlineJson =
     process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON ?? process.env.GSC_SERVICE_ACCOUNT_KEY ?? null;
   if (inlineJson && inlineJson.trim().length > 0) {
-    return { gscServiceAccountKey: inlineJson.trim() };
+    return { key: inlineJson.trim() };
   }
   const filePath = cliFilePath ?? process.env.GOOGLE_APPLICATION_CREDENTIALS ?? null;
   if (filePath && filePath.trim().length > 0) {
-    return { gscServiceAccountKeyFile: filePath.trim() };
+    return { keyFile: filePath.trim() };
   }
   return {};
+}
+
+function mapToGscCreds(creds: { key?: string; keyFile?: string }): {
+  gscServiceAccountKey?: string;
+  gscServiceAccountKeyFile?: string;
+} {
+  return {
+    ...(creds.key !== undefined ? { gscServiceAccountKey: creds.key } : {}),
+    ...(creds.keyFile !== undefined ? { gscServiceAccountKeyFile: creds.keyFile } : {}),
+  };
 }
 
 function truncate(value: string, maxLength: number): string {
@@ -965,7 +975,7 @@ async function main(): Promise<void> {
             gsc: options.gsc,
             ...(options.gscProperty ? { gscProperty: options.gscProperty } : {}),
             ...(options.gscDays !== null ? { gscDays: options.gscDays } : {}),
-            ...resolveGscCredentialOptions(options.gscServiceAccountKeyFile),
+            ...mapToGscCreds(resolveGoogleCredentialOptions(options.gscServiceAccountKeyFile)),
             render: options.render,
             ...(options.renderTimeoutMs ? { renderTimeoutMs: options.renderTimeoutMs } : {}),
             retries: options.retries,
