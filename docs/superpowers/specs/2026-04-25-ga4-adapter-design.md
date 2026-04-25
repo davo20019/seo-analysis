@@ -172,7 +172,7 @@ When `opts.property` is not passed:
 
 1. `GET https://analyticsadmin.googleapis.com/v1beta/accountSummaries` — paginate via `pageToken` until exhausted; flatten to `[{ property: "properties/123", displayName }]`.
 2. For each property, `GET https://analyticsadmin.googleapis.com/v1beta/properties/{ID}/dataStreams` — filter to `type === "WEB_DATA_STREAM"`, read `webStreamData.defaultUri`.
-3. Match: hostname of `defaultUri` (case-insensitive, leading `www.` stripped) equals origin hostname (same normalization).
+3. Match: hostname of `defaultUri` (case-insensitive, leading `www.` stripped) equals origin hostname (same normalization). This www-stripping is local to property auto-detection only — `canonicalizeForMatch` (used for per-page URL matching) does **not** strip www, since the crawler's reported `finalUrl` already reflects whichever host the site canonicalizes to.
    - **Exactly one match** → use it.
    - **Multiple matches** → throw with the candidate list (`property` + `displayName` + `defaultUri`); user resolves by passing `--ga4-property`.
    - **Zero matches** → throw with the GA4 Property Access URL and the `--ga4-property` suggestion.
@@ -408,5 +408,6 @@ No integration tests against real GA4 (no fixtures, no network in CI — same po
 ## Risks & open questions
 
 - **Auto-detection ambiguity in real properties.** Some clients have multiple GA4 properties pointing at the same domain (test/staging/prod streams). The "multiple matches → throw with candidates" path is the honest answer; users disambiguate via `--ga4-property`. We could add `--ga4-stream-id` as a tiebreaker later if this comes up often.
+- **`--gsc-setup` naming feels GSC-specific to a GA4-only user.** The wizard creates a generic Google service account that both adapters use. For users who only want `--ga4`, the missing-credentials error message will read "Run `seo-audit --gsc-setup` first to create the service account, then grant it Viewer in GA4 Property Access Management" — accurate but discoverable only via the error path. A future rename to `--google-setup` (with `--gsc-setup` retained as a deprecated alias) is on the table once a third Google API arrives.
 - **`engagementRate` sample-size effects.** On low-traffic pages, the value is noisy. Acceptable for an audit deliverable; not blocking.
 - **No bundle-size delta.** Plain `fetch` + `crypto`; no SDK additions.
