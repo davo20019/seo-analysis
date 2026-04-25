@@ -116,3 +116,50 @@ export function validateArticle(obj: JsonLdObject): Issue[] {
   }
   return issues;
 }
+
+export function validateFaq(obj: JsonLdObject): Issue[] {
+  const issues: Issue[] = [];
+  const entities = obj.mainEntity;
+  if (!Array.isArray(entities) || entities.length === 0) {
+    issues.push(makeIssue("SCHEMA_FAQ_NO_QUESTIONS", "medium",
+      "FAQPage schema has no `mainEntity` questions — required for rich-result eligibility.",
+      "Add a `mainEntity` array of Question objects, each with `name` and an `acceptedAnswer.text`."));
+    return issues;
+  }
+  for (const q of entities) {
+    if (!q || typeof q !== "object") continue;
+    const question = q as Record<string, unknown>;
+    const hasName = isPresent(question.name);
+    const answer = question.acceptedAnswer as Record<string, unknown> | undefined;
+    const hasAnswer = !!answer && isPresent(answer.text);
+    if (!hasName || !hasAnswer) {
+      issues.push(makeIssue("SCHEMA_FAQ_QUESTION_INCOMPLETE", "medium",
+        "One or more FAQ Question entries are missing `name` or `acceptedAnswer.text`.",
+        "Each Question must have a non-empty `name` and an `acceptedAnswer` with non-empty `text`."));
+      break;
+    }
+  }
+  return issues;
+}
+
+export function validateBreadcrumb(obj: JsonLdObject): Issue[] {
+  const issues: Issue[] = [];
+  const items = obj.itemListElement;
+  if (!Array.isArray(items) || items.length === 0) {
+    issues.push(makeIssue("SCHEMA_BREADCRUMB_NO_ITEMS", "medium",
+      "BreadcrumbList has no `itemListElement` entries.",
+      "Add a non-empty `itemListElement` array of ListItem objects."));
+    return issues;
+  }
+  for (const it of items) {
+    if (!it || typeof it !== "object") continue;
+    const item = it as Record<string, unknown>;
+    if (!isPresent(item.position) || !isPresent(item.name) || !isPresent(item.item)) {
+      issues.push(makeIssue("SCHEMA_BREADCRUMB_ITEM_INCOMPLETE", "medium",
+        "One or more breadcrumb items are missing `position`, `name`, or `item`.",
+        "Each ListItem must have a numeric `position`, a `name`, and an `item` URL."));
+      break;
+    }
+  }
+  return issues;
+}

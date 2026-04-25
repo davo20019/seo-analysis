@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseJsonLd, validateProduct, validateArticle } from "../../src/checks/schema-checks.js";
+import { parseJsonLd, validateProduct, validateArticle, validateFaq, validateBreadcrumb } from "../../src/checks/schema-checks.js";
 
 describe("parseJsonLd", () => {
   it("parses a single object script", () => {
@@ -85,6 +85,61 @@ describe("validateArticle", () => {
       image: "https://x/img.jpg",
       datePublished: "2024-01-01",
       author: { name: "A" },
+    })).toEqual([]);
+  });
+});
+
+describe("validateFaq", () => {
+  it("flags FAQPage with no mainEntity", () => {
+    const issues = validateFaq({ "@type": "FAQPage" });
+    expect(issues.map((i) => i.code)).toContain("SCHEMA_FAQ_NO_QUESTIONS");
+  });
+
+  it("flags Q&A entries missing question text or answer", () => {
+    const issues = validateFaq({
+      "@type": "FAQPage",
+      mainEntity: [
+        { "@type": "Question", name: "" },
+        { "@type": "Question", name: "Q?", acceptedAnswer: { "@type": "Answer", text: "" } },
+      ],
+    });
+    const codes = issues.map((i) => i.code);
+    expect(codes).toContain("SCHEMA_FAQ_QUESTION_INCOMPLETE");
+  });
+
+  it("returns empty for a valid FAQ", () => {
+    expect(validateFaq({
+      "@type": "FAQPage",
+      mainEntity: [
+        { "@type": "Question", name: "Q?", acceptedAnswer: { "@type": "Answer", text: "A." } },
+      ],
+    })).toEqual([]);
+  });
+});
+
+describe("validateBreadcrumb", () => {
+  it("flags missing itemListElement", () => {
+    const issues = validateBreadcrumb({ "@type": "BreadcrumbList" });
+    expect(issues.map((i) => i.code)).toContain("SCHEMA_BREADCRUMB_NO_ITEMS");
+  });
+
+  it("flags items missing position or name or item", () => {
+    const issues = validateBreadcrumb({
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        { "@type": "ListItem", position: 1, name: "Home" },
+      ],
+    });
+    expect(issues.map((i) => i.code)).toContain("SCHEMA_BREADCRUMB_ITEM_INCOMPLETE");
+  });
+
+  it("accepts a valid breadcrumb", () => {
+    expect(validateBreadcrumb({
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        { "@type": "ListItem", position: 1, name: "Home", item: "https://x.com/" },
+        { "@type": "ListItem", position: 2, name: "Products", item: "https://x.com/p" },
+      ],
     })).toEqual([]);
   });
 });
