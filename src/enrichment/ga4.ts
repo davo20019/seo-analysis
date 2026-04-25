@@ -240,7 +240,7 @@ function parseNum(value: string | undefined): number {
 function mapDataApiError(status: number, body: string, property: string): Error {
   if (status === 401) {
     return new Error(
-      `GA4 token exchange failed (401): ${body}. Check service-account key and that the analytics.readonly scope is enabled.`,
+      `GA4 token exchange failed (401). Likely causes: invalid or expired service-account key, or the token request was denied at Google's OAuth2 endpoint. Body: ${body}`,
     );
   }
   if (status === 403) {
