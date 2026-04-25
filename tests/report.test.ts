@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderHtmlReport, escapeHtml } from "../src/report.js";
+import { renderHtmlReport, escapeHtml, renderPdfReport } from "../src/report.js";
 import type { SiteReport } from "../src/types.js";
 
 const minimalReport: SiteReport = {
@@ -97,4 +97,15 @@ describe("renderHtmlReport", () => {
     expect(out).not.toContain("<script>alert(1)</script>");
     expect(out).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
   });
+});
+
+const RUN_BROWSER_TESTS = process.env.RUN_BROWSER_TESTS === "1";
+const maybeDescribe = RUN_BROWSER_TESTS ? describe : describe.skip;
+
+maybeDescribe("renderPdfReport (integration)", () => {
+  it("produces a non-empty PDF buffer starting with %PDF", async () => {
+    const buf = await renderPdfReport(minimalReport);
+    expect(buf.length).toBeGreaterThan(1000);
+    expect(buf.subarray(0, 4).toString()).toBe("%PDF");
+  }, 60000);
 });

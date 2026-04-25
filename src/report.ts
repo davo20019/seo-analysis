@@ -1,4 +1,5 @@
 import type { SiteReport, Issue, Severity } from "./types.js";
+import { chromium } from "playwright";
 
 export function escapeHtml(str: string): string {
   return str
@@ -151,4 +152,21 @@ function renderInfrastructure(report: SiteReport): string {
 <td>${escapeHtml(i.message)}</td>
 </tr>`).join("");
   return `<table><thead><tr><th>Severity</th><th>Code</th><th>Message</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+export async function renderPdfReport(report: SiteReport): Promise<Buffer> {
+  const html = renderHtmlReport(report);
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.setContent(html, { waitUntil: "load" });
+    return await page.pdf({
+      format: "A4",
+      margin: { top: "16mm", bottom: "16mm", left: "12mm", right: "12mm" },
+      printBackground: true,
+    });
+  } finally {
+    await browser.close();
+  }
 }
