@@ -30,8 +30,9 @@ import {
   type ProbeFetcher,
 } from "./checks/agent-readiness-checks.js";
 import { applyEnrichment } from "./enrichment/index.js";
-import { GoogleServiceAccountAuth, type ServiceAccountSource } from "./enrichment/google-auth.js";
 import { GscEnrichmentSource } from "./enrichment/gsc.js";
+import { Ga4EnrichmentSource } from "./enrichment/ga4.js";
+import { GoogleServiceAccountAuth, type ServiceAccountSource } from "./enrichment/google-auth.js";
 import { checkJsonLdValidation } from "./checks/schema-checks.js";
 import { queryCrux, checkCruxMetrics } from "./crux.js";
 import {
@@ -2244,30 +2245,101 @@ async function runGscEnrichment(args: {
   }
 }
 
-function buildPriorityIssues(
+async function runGa4Enrichment(args: {
+  startUrl: string;
+  pages: PageReport[];
+  property?: string;
+  days?: number;
+  serviceAccount: ServiceAccountSource | null;
+}): Promise<import("./types.js").Ga4EnrichmentReport> {
+  if (!args.serviceAccount) {
+    return {
+      property: args.property ?? "",
+      startDate: "",
+      endDate: "",
+      totalRows: 0,
+      matchedPages: 0,
+      unmatchedRows: 0,
+      error:
+        "GA4 enrichment skipped: no service-account credentials. " +
+        "Set GOOGLE_APPLICATION_CREDENTIALS, GOOGLE_APPLICATION_CREDENTIALS_JSON, " +
+        "or pass --ga4-service-account-key-file. " +
+        "Reuses the same service account created by `seo-audit --gsc-setup`; " +
+        "grant it Viewer on your GA4 property under Admin → Property Access Management.",
+    };
+  }
+
+  const source = new Ga4EnrichmentSource({
+    property: args.property,
+    days: args.days,
+    auth: new GoogleServiceAccountAuth(args.serviceAccount),
+  });
+
+  const origin = new URL(args.startUrl).origin;
+  try {
+    const data = await source.fetch(origin, args.startUrl);
+    const { matched } = applyEnrichment(args.pages, source, data);
+    const r = source.lastResult;
+    return {
+      property: r?.property ?? "",
+      startDate: r?.startDate ?? "",
+      endDate: r?.endDate ?? "",
+      totalRows: r?.totalRows ?? 0,
+      matchedPages: matched,
+      unmatchedRows: Math.max(0, (r?.totalRows ?? 0) - matched),
+      error: null,
+    };
+  } catch (err) {
+    return {
+      property: args.property ?? "",
+      startDate: "",
+      endDate: "",
+      totalRows: 0,
+      matchedPages: 0,
+      unmatchedRows: 0,
+      error: `GA4 enrichment failed: ${(err as Error).message}`,
+    };
+  }
+}
+
+export function buildPriorityIssues(
   pages: PageReport[],
   limit = 10,
 ): import("./types.js").PrioritySummaryEntry[] {
   const entries: import("./types.js").PrioritySummaryEntry[] = [];
   for (const page of pages) {
-    const gsc = page.metrics?.gsc;
-    if (!gsc) continue;
-    if (gsc.impressions <= 0) continue;
+    const m = page.metrics;
+    if (!m) continue;
+
+    let rankedBy: "gsc" | "ga4" | null = null;
+    let rankValue = 0;
+    if (m.gsc && m.gsc.impressions > 0) {
+      rankedBy = "gsc";
+      rankValue = m.gsc.impressions;
+    } else if (m.ga4 && m.ga4.sessions > 0) {
+      rankedBy = "ga4";
+      rankValue = m.ga4.sessions;
+    }
+    if (!rankedBy) continue;
+
     for (const issue of page.issues) {
       if (issue.severity !== "high" && issue.severity !== "medium") continue;
       entries.push({
         code: issue.code,
         severity: issue.severity,
         url: page.finalUrl,
-        impressions: gsc.impressions,
-        clicks: gsc.clicks,
-        position: gsc.position,
+        rankedBy,
+        rankValue,
+        metrics: m,
+        impressions: m.gsc?.impressions ?? 0,
+        clicks: m.gsc?.clicks ?? 0,
+        position: m.gsc?.position ?? 0,
       });
     }
   }
   entries.sort((a, b) => {
     if (a.severity !== b.severity) return a.severity === "high" ? -1 : 1;
-    return b.impressions - a.impressions;
+    return b.rankValue - a.rankValue;
   });
   return entries.slice(0, limit);
 }
@@ -2661,13 +2733,31 @@ export async function analyzeSite(
     });
   }
 
+  let ga4;
+  if (rawOptions.ga4) {
+    const serviceAccount: ServiceAccountSource | null = rawOptions.ga4ServiceAccountKey
+      ? { json: rawOptions.ga4ServiceAccountKey }
+      : rawOptions.ga4ServiceAccountKeyFile
+        ? { filePath: rawOptions.ga4ServiceAccountKeyFile }
+        : null;
+    ga4 = await runGa4Enrichment({
+      startUrl: normalizedStartUrl,
+      pages,
+      property: rawOptions.ga4Property,
+      days: rawOptions.ga4Days,
+      serviceAccount
+    });
+  }
+
   const summary = buildSummary(
     pages,
     infrastructureResult.report,
     duplicateTitles,
     duplicateMetaDescriptions
   );
-  if (gsc && !gsc.error) {
+  const gscOk = gsc && !gsc.error;
+  const ga4Ok = ga4 && !ga4.error;
+  if (gscOk || ga4Ok) {
     summary.priorityIssues = buildPriorityIssues(pages);
   }
 
@@ -2680,7 +2770,8 @@ export async function analyzeSite(
     keywordSummary,
     topTerms,
     ...(agentReadiness ? { agentReadiness } : {}),
-    ...(gsc ? { gsc } : {})
+    ...(gsc ? { gsc } : {}),
+    ...(ga4 ? { ga4 } : {})
   };
   } finally {
     if (renderBrowser) {
