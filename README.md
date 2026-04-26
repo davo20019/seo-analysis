@@ -100,6 +100,12 @@ npm run dev -- https://example.com --json --output report.json
 
 ## Useful Options
 
+| Flag | Description |
+|---|---|
+| `--output <path>` | Write JSON report to a file (default: stdout). |
+| `--no-persist` | Skip persisting the crawl to `~/.config/seo-audit/crawls/`. Default: every successful audit is persisted. Set `SEO_AUDIT_NO_PERSIST=1` to default the same. |
+| `--fail-on <severity>` | Exit non-zero if issues at `<severity>` increased. Fresh-audit mode: compares to the previous persisted crawl. Diff mode: compares the two passed report files. One of: `high`, `medium`, `low`. |
+
 ```bash
 # Faster crawl with retries and sitemap seeding
 npm run dev -- https://example.com --max-pages 50 --concurrency 6 --retries 2
@@ -372,7 +378,53 @@ This tool does not collect telemetry. No analytics, no phone-home, no install tr
 
 If a future version ever adds opt-in telemetry, it will be exactly that — opt-in, with explicit disclosure.
 
+### Persistence
+
+Every successful audit is auto-saved to `~/.config/seo-audit/crawls/<host>/<timestamp>.json`
+(mode `0700`, alongside the existing `gsc-key.json`). This enables:
+
+- `seo-audit diff <url>` — compare the two most recent crawls of a host without
+  having to remember file paths.
+- `seo-audit <url> --fail-on <severity>` — gate cron / CI runs against
+  regressions vs. the previous persisted crawl.
+
+**The persisted JSON contains everything the audit captured**, including page
+metadata, GSC/GA4 traffic data when enriched (`--gsc` / `--ga4`), and the full
+body text per page. Treat the directory as you would any other client-data
+artifact.
+
+**Opt out** with `--no-persist` per run, or `SEO_AUDIT_NO_PERSIST=1` (or
+`SEO_AUDIT_NO_PERSIST=true`) in your environment.
+
+**Override the location** with `SEO_AUDIT_CRAWLS_DIR=<path>` — useful when the
+default `$HOME/.config/` doesn't fit (sandboxed CI runners, separate volume, XDG
+preferences).
+
+**Retention:** none. Crawls accumulate forever. At ~5 MB per crawl × 250 weekly
+crawls × 5 years per host, the footprint is around 1.3 GB per host long-term —
+manageable. `rm -rf ~/.config/seo-audit/crawls/<host>/` if you ever want to
+reset.
+
 ## CHANGELOG
+
+### v0.4.0 — 2026-04-26
+
+- **Added:** every successful audit is now persisted to
+  `~/.config/seo-audit/crawls/<host>/<timestamp>.json` (mode `0700`).
+  Opt out via `--no-persist` or `SEO_AUDIT_NO_PERSIST=1`.
+- **Added:** `seo-audit diff <url>` auto-picks the two most recent
+  persisted crawls of the host. The existing
+  `seo-audit diff <old.json> <new.json>` form still works for
+  explicit comparisons.
+- **Added:** `SEO_AUDIT_CRAWLS_DIR` env var overrides the default
+  crawls directory location.
+- **Added:** `evaluateFailOn` helper exported from `dist/diff.js`
+  for programmatic consumers.
+- **Changed:** `--fail-on <severity>` now applies in fresh-audit mode
+  too. It compares the new audit against the previous persisted crawl
+  and exits non-zero if issues at the named severity increased. On the
+  first run for a host, prints a "skipping regression check" warning
+  and exits `0`. (Diff-mode behavior is unchanged.)
 
 ### v0.3.0 — 2026-04-25
 
