@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { mkdir, readFile, writeFile, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile, stat } from "node:fs/promises";
 import type { SiteReport } from "./types.js";
 
 export function resolveCrawlsDir(): string {
@@ -95,14 +95,49 @@ function filenameFor(hostDir: string, when: Date): string {
   return join(hostDir, `${iso}.json`);
 }
 
-// Forward-declared; the real listCrawls is added in the next task.
-// listCrawlsInDir is a low-level helper used both by listCrawls and by
-// persistCrawl's "find previous" lookup.
-async function listCrawlsInDir(_hostDir: string, _host: string): Promise<CrawlEntry[]> {
-  // Placeholder — Task 4 implements this. Until then, persistCrawl's
-  // first-run/previousPath behavior is exercised end-to-end by the tests
-  // above using mkdir + (eventual) listCrawlsInDir.
-  return [];
+async function listCrawlsInDir(hostDir: string, host: string): Promise<CrawlEntry[]> {
+  let names: string[];
+  try {
+    names = await readdir(hostDir);
+  } catch {
+    return [];
+  }
+  const entries: CrawlEntry[] = [];
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const full = join(hostDir, name);
+    let info: Awaited<ReturnType<typeof stat>>;
+    try {
+      info = await stat(full);
+    } catch {
+      continue;
+    }
+    if (!info.isFile()) continue;
+    entries.push({
+      path: full,
+      timestamp: name.slice(0, -".json".length),
+      host,
+      size: info.size,
+      mtime: info.mtime,
+    });
+  }
+  // Newest-first by filename (timestamps are lexicographic-sortable ISO strings).
+  entries.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
+  return entries;
+}
+
+export async function listCrawls(host: string): Promise<CrawlEntry[]> {
+  const hostDir = join(resolveCrawlsDir(), host);
+  return listCrawlsInDir(hostDir, host);
+}
+
+export async function recentCrawlsForUrl(
+  url: string,
+  count: number,
+): Promise<CrawlEntry[]> {
+  const host = hostKeyFromUrl(url);
+  const all = await listCrawls(host);
+  return all.slice(0, Math.max(0, count));
 }
 
 export interface CrawlEntry {

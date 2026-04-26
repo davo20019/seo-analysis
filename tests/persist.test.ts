@@ -157,3 +157,61 @@ describe("persistCrawl + loadCrawl", () => {
     expect((await loadCrawl(second.path)).startUrl).toBe(report.startUrl);
   });
 });
+
+describe("listCrawls + recentCrawlsForUrl", () => {
+  let tmp: string;
+  const ORIGINAL_ENV = process.env.SEO_AUDIT_CRAWLS_DIR;
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), "seo-audit-test-"));
+    process.env.SEO_AUDIT_CRAWLS_DIR = tmp;
+  });
+
+  afterEach(async () => {
+    if (ORIGINAL_ENV === undefined) delete process.env.SEO_AUDIT_CRAWLS_DIR;
+    else process.env.SEO_AUDIT_CRAWLS_DIR = ORIGINAL_ENV;
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("returns [] for a host with no directory", async () => {
+    const { listCrawls } = await import("../src/persist.js");
+    expect(await listCrawls("never-persisted.com")).toEqual([]);
+  });
+
+  it("returns entries newest-first after multiple persists", async () => {
+    const { listCrawls } = await import("../src/persist.js");
+    const report = fixtureReport("https://example.com/");
+    const t1 = new Date("2026-04-01T12:00:00.000Z");
+    const t2 = new Date("2026-04-15T12:00:00.000Z");
+    const t3 = new Date("2026-04-25T12:00:00.000Z");
+    await persistCrawl(report, { now: () => t1 });
+    await persistCrawl(report, { now: () => t2 });
+    await persistCrawl(report, { now: () => t3 });
+    const entries = await listCrawls("example.com");
+    expect(entries).toHaveLength(3);
+    // Newest-first: t3, t2, t1
+    expect(entries[0].timestamp).toContain("2026-04-25");
+    expect(entries[1].timestamp).toContain("2026-04-15");
+    expect(entries[2].timestamp).toContain("2026-04-01");
+  });
+
+  it("recentCrawlsForUrl returns the N newest", async () => {
+    const { recentCrawlsForUrl } = await import("../src/persist.js");
+    const report = fixtureReport("https://example.com/");
+    for (let i = 1; i <= 5; i += 1) {
+      await persistCrawl(report, { now: () => new Date(`2026-04-${String(i).padStart(2, "0")}T12:00:00.000Z`) });
+    }
+    const recent = await recentCrawlsForUrl("https://example.com/", 2);
+    expect(recent).toHaveLength(2);
+    expect(recent[0].timestamp).toContain("2026-04-05");
+    expect(recent[1].timestamp).toContain("2026-04-04");
+  });
+
+  it("recentCrawlsForUrl returns fewer entries if N exceeds the count", async () => {
+    const { recentCrawlsForUrl } = await import("../src/persist.js");
+    const report = fixtureReport("https://example.com/");
+    await persistCrawl(report);
+    const recent = await recentCrawlsForUrl("https://example.com/", 5);
+    expect(recent).toHaveLength(1);
+  });
+});
