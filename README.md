@@ -2,7 +2,9 @@
 
 This project is a crawl-based SEO CLI for auditing websites.
 
-It focuses on technical SEO issues that can be derived from the crawl itself, with optional headless-Chromium rendering (`--render`), Google CrUX field data (`--crux`), and Lighthouse audits for a small set of pages.
+It focuses on technical SEO issues that can be derived from the crawl itself, with optional headless-Chromium rendering (`--render`), Google CrUX field data (`--crux`), and Lighthouse audits for a small set of pages. Optional traffic enrichment from Google Search Console (`--gsc`) and Google Analytics 4 (`--ga4`) ranks issues by real-world impact.
+
+Every successful audit is auto-persisted to `~/.config/seo-audit/crawls/`; `seo-audit diff <url>` compares the two most recent crawls of a host, and `--fail-on <severity>` gates CI/cron jobs against regressions vs. the previous persisted crawl. Opt out of persistence with `--no-persist` or `SEO_AUDIT_NO_PERSIST=1`.
 
 ## What It Checks
 
@@ -49,6 +51,8 @@ It focuses on technical SEO issues that can be derived from the crawl itself, wi
 - real-user Core Web Vitals from Google CrUX (LCP/INP/CLS p75) when `--crux` is enabled and `CRUX_API_KEY` is set
 - optional AI-agent readiness scoring (`--agent-readiness`) covering AI-bot rules, llms.txt depth, `llms-full.txt`, markdown content negotiation, well-known endpoints (`agent-skills`, `api-catalog`, `mcp/server-card`, OAuth discovery), Web Bot Auth, and `Link:` headers
 - optional Google Search Console enrichment (`--gsc`) merging clicks/impressions/CTR/avg-position per crawled URL, plus a "Priority issues" summary that ranks high/medium-severity issues by traffic exposure
+- optional Google Analytics 4 enrichment (`--ga4`) merging sessions/pageviews/users/engagement-rate per crawled URL; feeds the "Priority issues" summary as a fallback when GSC isn't available
+- crawl persistence + diffing: every audit auto-saves to `~/.config/seo-audit/crawls/<host>/<timestamp>.json`; `seo-audit diff <url>` auto-picks the two most recent crawls, and `--fail-on <severity>` gates CI/cron against regressions vs. the previous persisted crawl
 
 ## Install
 
