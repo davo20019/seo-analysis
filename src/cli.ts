@@ -216,14 +216,15 @@ function parseArgs(argv: string[]): CliOptions {
     options.diffMode = true;
     const arg1 = argv[1];
     const arg2 = argv[2];
-    if (arg1 && isHttpUrl(arg1) && !arg2) {
+    if (arg1 && isHttpUrl(arg1) && (!arg2 || arg2.startsWith("--"))) {
       options.diffAutoUrl = arg1;
     } else if (arg1 && arg2) {
       options.diffOldPath = arg1;
       options.diffNewPath = arg2;
     }
 
-    for (let index = 3; index < argv.length; index += 1) {
+    const flagLoopStart = options.diffAutoUrl ? 2 : 3;
+    for (let index = flagLoopStart; index < argv.length; index += 1) {
       const arg = argv[index];
       if (arg === "--json") { options.json = true; continue; }
       if (arg === "--output") {
@@ -1170,8 +1171,12 @@ async function main(): Promise<void> {
           console.error(`Warning: failed to persist crawl: ${(err as Error).message}`);
         }
       } else if (options.failOnSeverity) {
-        const recent = await recentCrawlsForUrl(report.startUrl, 1);
-        previousPath = recent[0]?.path ?? null;
+        try {
+          const recent = await recentCrawlsForUrl(report.startUrl, 1);
+          previousPath = recent[0]?.path ?? null;
+        } catch (err) {
+          console.error(`Warning: could not read crawl history: ${(err as Error).message}`);
+        }
       }
       previousByReport.set(report, previousPath);
     }
@@ -1179,7 +1184,14 @@ async function main(): Promise<void> {
     if (options.failOnSeverity) {
       for (const report of reports) {
         const previousPath = previousByReport.get(report) ?? null;
-        const previous = previousPath ? await loadCrawl(previousPath) : null;
+        let previous: SiteReport | null = null;
+        if (previousPath) {
+          try {
+            previous = await loadCrawl(previousPath);
+          } catch (err) {
+            console.error(`Warning: could not read previous crawl at ${previousPath}: ${(err as Error).message}`);
+          }
+        }
         const decision = evaluateFailOn(report, previous, options.failOnSeverity);
         if (!previous) {
           console.error(
