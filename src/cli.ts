@@ -6,11 +6,13 @@ import { evaluateFailOn } from "./diff.js";
 import { scanDirectory } from "./directory-scanner.js";
 import type {
   AgentReadinessReport,
+  ContentDedupReport,
   DuplicateGroup,
   Ga4EnrichmentReport,
   GscEnrichmentReport,
   KeywordSummary,
   LighthouseReport,
+  LinkGraphReport,
   PrioritySummaryEntry,
   SiteReport,
   TermFrequency
@@ -36,6 +38,8 @@ interface CliOptions {
   json: boolean;
   lighthouse: boolean;
   lighthousePages: number;
+  noContentDedup: boolean;
+  noLinkGraph: boolean;
   noPersist: boolean;
   maxPages: number;
   outputPath: string | null;
@@ -105,6 +109,8 @@ Options:
   --no-persist               Skip persisting the crawl to ~/.config/seo-audit/crawls/.
                              Default: every successful audit is persisted.
                              Env: SEO_AUDIT_NO_PERSIST=1 sets the same.
+  --no-content-dedup         Skip the near-duplicate content detection (MinHash).
+  --no-link-graph            Skip the internal link-equity (PageRank) computation.
   --fail-on <severity>       Exit non-zero if issues at <severity> increased.
                              Fresh-audit mode: compares to the previous persisted crawl.
                              Diff mode: compares the two passed report files.
@@ -188,6 +194,8 @@ function parseArgs(argv: string[]): CliOptions {
     json: false,
     lighthouse: false,
     lighthousePages: 1,
+    noContentDedup: false,
+    noLinkGraph: false,
     noPersist: false,
     maxPages: 10,
     outputPath: null,
@@ -471,6 +479,16 @@ function parseArgs(argv: string[]): CliOptions {
 
     if (arg === "--no-persist") {
       options.noPersist = true;
+      continue;
+    }
+
+    if (arg === "--no-content-dedup") {
+      options.noContentDedup = true;
+      continue;
+    }
+
+    if (arg === "--no-link-graph") {
+      options.noLinkGraph = true;
       continue;
     }
 
@@ -827,6 +845,57 @@ function formatGa4Enrichment(ga4: Ga4EnrichmentReport): string[] {
   ];
 }
 
+function formatContentDedup(r: ContentDedupReport): string[] {
+  if (r.clusters.length === 0) {
+    return [
+      "",
+      `Content duplicates: 0 near-duplicate clusters (${r.pagesAnalyzed} analyzed, ${r.pagesSkipped} skipped due to short body).`,
+    ];
+  }
+  const firstCluster = r.clusters[0];
+  const lines = [
+    "",
+    `Content duplicates: ${r.clusters.length} cluster(s) covering ${r.totalNearDuplicatePages} pages (Jaccard ≥ ${firstCluster.threshold}, shingle=${firstCluster.shingleSize}):`,
+  ];
+  for (const c of r.clusters) {
+    lines.push(`  Cluster (${c.members.length} pages, representative: ${c.representativeUrl}):`);
+    const members = c.members.slice(0, 50);
+    for (const m of members) {
+      const tag = m.url === c.representativeUrl ? "★" : "·";
+      lines.push(`    ${tag} ${m.url} (similarity ${m.similarityToRepresentative.toFixed(2)})`);
+    }
+    if (c.members.length > 50) {
+      lines.push(`    … and ${c.members.length - 50} more`);
+    }
+  }
+  return lines;
+}
+
+function formatLinkGraph(r: LinkGraphReport): string[] {
+  if (r.pagesAnalyzed < 2) {
+    return ["", `Internal link equity: skipped (need ≥2 crawled pages, have ${r.pagesAnalyzed}).`];
+  }
+  const lines = [
+    "",
+    `Internal link equity (PageRank d=${r.damping}, ${r.iterations} iterations, ${r.edges} internal edges):`,
+    `  Top by PageRank:`,
+  ];
+  for (const e of r.topPages) {
+    lines.push(
+      `    ${e.url}  rank=${e.pageRank.toFixed(4)}  words=${e.wordCount}  incoming=${e.incomingInternalLinks}`,
+    );
+  }
+  if (r.underLinkedImportantPages.length > 0) {
+    lines.push(`  Underlinked important pages (high content, low rank):`);
+    for (const e of r.underLinkedImportantPages) {
+      lines.push(
+        `    ${e.url}  rank=${e.pageRank.toFixed(4)}  words=${e.wordCount}  incoming=${e.incomingInternalLinks}`,
+      );
+    }
+  }
+  return lines;
+}
+
 function formatPriorityIssues(entries: PrioritySummaryEntry[]): string[] {
   if (entries.length === 0) return [];
   const lines = ["", "Priority issues (high/medium severity on pages with traffic):"];
@@ -1019,6 +1088,9 @@ function formatTextReport(report: SiteReport): string {
     lines.push(...formatGa4Enrichment(report.ga4));
   }
 
+  if (report.contentDedup) lines.push(...formatContentDedup(report.contentDedup));
+  if (report.linkGraph)    lines.push(...formatLinkGraph(report.linkGraph));
+
   if (report.summary.priorityIssues && report.summary.priorityIssues.length > 0) {
     lines.push(...formatPriorityIssues(report.summary.priorityIssues));
   }
@@ -1134,6 +1206,8 @@ async function main(): Promise<void> {
             ...(options.ga4Property ? { ga4Property: options.ga4Property } : {}),
             ...(options.ga4Days !== null ? { ga4Days: options.ga4Days } : {}),
             ...mapToGa4Creds(resolveGoogleCredentialOptions(options.ga4ServiceAccountKeyFile)),
+            contentDedup: !options.noContentDedup,
+            linkGraph: !options.noLinkGraph,
             render: options.render,
             ...(options.renderTimeoutMs ? { renderTimeoutMs: options.renderTimeoutMs } : {}),
             retries: options.retries,
