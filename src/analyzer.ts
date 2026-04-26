@@ -44,6 +44,7 @@ import {
   type SitemapEntry,
 } from "./checks/sitemap-checks.js";
 import type {
+  AnalyzeProgressEvent,
   AnalyzeOptions,
   DuplicateGroup,
   HreflangAlternate,
@@ -2505,6 +2506,24 @@ export async function analyzeSite(
   const seenFinalUrls = new Set<string>();
   const queue: string[] = [];
   const pages: PageReport[] = [];
+  const progressMaxPages = Number.isFinite(maxPages) ? maxPages : null;
+  const emitProgress = (
+    event: Omit<AnalyzeProgressEvent, "crawledPages" | "maxPages" | "queuedUrls" | "activePages"> & {
+      activePages?: number;
+    }
+  ): void => {
+    if (!rawOptions.onProgress) {
+      return;
+    }
+
+    rawOptions.onProgress({
+      ...event,
+      crawledPages: pages.length,
+      maxPages: progressMaxPages,
+      queuedUrls: queue.length,
+      activePages: event.activePages ?? 0
+    });
+  };
 
   const enqueueUrl = (url: string): void => {
     if (queue.length >= maxQueueSize) {
@@ -2529,6 +2548,8 @@ export async function analyzeSite(
     true,
     fullSitemap || sampleSitemap ? Number.POSITIVE_INFINITY : maxQueueSize
   );
+  emitProgress({ phase: "crawl-start", url: normalizedStartUrl });
+  emitProgress({ phase: "page-start", url: normalizedStartUrl, activePages: 1 });
   const startPage = await analyzePage(normalizedStartUrl, allowedHosts, fetchOptions, {}, renderBrowser);
   visitedRequestedUrls.add(normalizedStartUrl);
   visitedRequestedUrls.add(startPage.finalUrl);
@@ -2542,6 +2563,12 @@ export async function analyzeSite(
   seenFinalUrls.add(startPage.finalUrl);
   pages.push(startPage);
   applyKeywordMatches(startPage, keywords);
+  emitProgress({
+    phase: "page-complete",
+    url: startPage.url,
+    finalUrl: startPage.finalUrl,
+    status: startPage.status
+  });
 
   const infrastructureResult = await infrastructurePromise;
 
@@ -2635,10 +2662,15 @@ export async function analyzeSite(
       break;
     }
 
+    for (const url of batchUrls) {
+      emitProgress({ phase: "page-start", url, activePages: batchUrls.length });
+    }
+
     const batchPages = await Promise.all(
       batchUrls.map((url) => analyzePage(url, allowedHosts, fetchOptions, robotsRules, renderBrowser))
     );
 
+    let activePages = batchPages.length;
     for (const page of batchPages) {
       visitedRequestedUrls.add(page.finalUrl);
 
@@ -2649,12 +2681,28 @@ export async function analyzeSite(
       }
 
       if (seenFinalUrls.has(page.finalUrl)) {
+        activePages -= 1;
+        emitProgress({
+          phase: "page-complete",
+          url: page.url,
+          finalUrl: page.finalUrl,
+          status: page.status,
+          activePages
+        });
         continue;
       }
 
       seenFinalUrls.add(page.finalUrl);
       pages.push(page);
       applyKeywordMatches(page, keywords);
+      activePages -= 1;
+      emitProgress({
+        phase: "page-complete",
+        url: page.url,
+        finalUrl: page.finalUrl,
+        status: page.status,
+        activePages
+      });
 
       if (pages.length >= maxPages || sampleSitemap) {
         continue;
@@ -2665,6 +2713,8 @@ export async function analyzeSite(
       }
     }
   }
+
+  emitProgress({ phase: "crawl-complete" });
 
   const duplicateTitles = buildDuplicateGroups(pages, (page) => page.checks.title);
   const duplicateMetaDescriptions = buildDuplicateGroups(
@@ -2698,17 +2748,21 @@ export async function analyzeSite(
     sampleSitemap
   );
 
-  const lighthouse: LighthouseReport[] = rawOptions.lighthouse
-    ? await runLighthouseAudits(
-        pickLighthouseUrls(pages, rawOptions.lighthousePageCount ?? DEFAULT_LIGHTHOUSE_PAGE_COUNT)
-      )
-    : [];
+  let lighthouse: LighthouseReport[] = [];
+  if (rawOptions.lighthouse) {
+    emitProgress({ phase: "analysis-start", stage: "lighthouse" });
+    lighthouse = await runLighthouseAudits(
+      pickLighthouseUrls(pages, rawOptions.lighthousePageCount ?? DEFAULT_LIGHTHOUSE_PAGE_COUNT)
+    );
+    emitProgress({ phase: "analysis-complete", stage: "lighthouse" });
+  }
 
   const keywordSummary = keywords.length > 0 ? buildKeywordSummary(keywords, pages) : undefined;
   const topTerms = extractTermsEnabled ? extractTermFrequencies(pages, topTermsCount) : undefined;
 
   let agentReadiness;
   if (rawOptions.agentReadiness) {
+    emitProgress({ phase: "analysis-start", stage: "agent-readiness" });
     agentReadiness = await runAgentReadiness({
       startUrl: normalizedStartUrl,
       pages,
@@ -2717,6 +2771,7 @@ export async function analyzeSite(
       llmsText: infrastructureResult.llmsText,
       fetchOptions
     });
+    emitProgress({ phase: "analysis-complete", stage: "agent-readiness" });
   }
 
   const linkGraph = rawOptions.linkGraph !== false
@@ -2729,6 +2784,7 @@ export async function analyzeSite(
 
   let gsc;
   if (rawOptions.gsc) {
+    emitProgress({ phase: "analysis-start", stage: "gsc" });
     const serviceAccount: ServiceAccountSource | null = rawOptions.gscServiceAccountKey
       ? { json: rawOptions.gscServiceAccountKey }
       : rawOptions.gscServiceAccountKeyFile
@@ -2741,10 +2797,12 @@ export async function analyzeSite(
       days: rawOptions.gscDays,
       serviceAccount
     });
+    emitProgress({ phase: "analysis-complete", stage: "gsc" });
   }
 
   let ga4;
   if (rawOptions.ga4) {
+    emitProgress({ phase: "analysis-start", stage: "ga4" });
     const serviceAccount: ServiceAccountSource | null = rawOptions.ga4ServiceAccountKey
       ? { json: rawOptions.ga4ServiceAccountKey }
       : rawOptions.ga4ServiceAccountKeyFile
@@ -2757,6 +2815,7 @@ export async function analyzeSite(
       days: rawOptions.ga4Days,
       serviceAccount
     });
+    emitProgress({ phase: "analysis-complete", stage: "ga4" });
   }
 
   const summary = buildSummary(

@@ -350,6 +350,32 @@ export interface LinkGraphReport {
   underLinkedImportantPages: LinkGraphTopEntry[];
 }
 
+export type AnalyzeProgressPhase =
+  | "crawl-start"
+  | "page-start"
+  | "page-complete"
+  | "crawl-complete"
+  | "analysis-start"
+  | "analysis-complete";
+
+export type AnalyzeProgressStage =
+  | "lighthouse"
+  | "agent-readiness"
+  | "gsc"
+  | "ga4";
+
+export interface AnalyzeProgressEvent {
+  phase: AnalyzeProgressPhase;
+  stage?: AnalyzeProgressStage;
+  url?: string;
+  finalUrl?: string;
+  status?: number;
+  crawledPages: number;
+  maxPages: number | null;
+  queuedUrls: number;
+  activePages: number;
+}
+
 export interface AnalyzeOptions {
   maxPages?: number;
   timeoutMs?: number;
@@ -383,4 +409,5 @@ export interface AnalyzeOptions {
   ga4ServiceAccountKeyFile?: string;
   contentDedup?: boolean;
   linkGraph?: boolean;
+  onProgress?: (event: AnalyzeProgressEvent) => void;
 }

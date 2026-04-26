@@ -79,7 +79,16 @@ npm install @davo20019/seo-audit
 
 ```ts
 import { analyzeSite } from "@davo20019/seo-audit";
-const report = await analyzeSite("https://example.com", { maxPages: 50 });
+
+const report = await analyzeSite("https://example.com", {
+  maxPages: 50,
+  onProgress: (event) => {
+    // Structured progress events for agents, jobs, and custom UIs.
+    if (event.phase === "page-complete") {
+      console.error(`crawled ${event.crawledPages}/${event.maxPages ?? "all"}`);
+    }
+  },
+});
 ```
 
 ## Quick Start (from source)
@@ -104,11 +113,17 @@ Write JSON output to a file:
 npm run dev -- https://example.com --json --output report.json
 ```
 
+Interactive terminal runs show a single updating crawl progress line on stderr.
+It is hidden automatically in CI/non-TTY runs and can be disabled with
+`--no-progress` or `SEO_AUDIT_NO_PROGRESS=1`, so JSON/stdout output remains
+machine-readable for agents and scripts.
+
 ## Useful Options
 
 | Flag | Description |
 |---|---|
 | `--output <path>` | Write JSON report to a file (default: stdout). |
+| `--no-progress` | Disable the interactive stderr crawl progress line. |
 | `--no-persist` | Skip persisting the crawl to `~/.config/seo-audit/crawls/`. Default: every successful audit is persisted. Set `SEO_AUDIT_NO_PERSIST=1` to default the same. |
 | `--fail-on <severity>` | Exit non-zero if issues at `<severity>` increased. Fresh-audit mode: compares to the previous persisted crawl. Diff mode: compares the two passed report files. One of: `high`, `medium`, `low`. |
 
@@ -412,6 +427,15 @@ manageable. `rm -rf ~/.config/seo-audit/crawls/<host>/` if you ever want to
 reset.
 
 ## CHANGELOG
+
+### v0.6.0 — 2026-04-26
+
+- **Added:** interactive crawl progress for CLI runs. The indicator writes to
+  stderr only, is enabled only for TTY sessions, and is disabled in CI/non-TTY
+  contexts. Use `--no-progress` or `SEO_AUDIT_NO_PROGRESS=1` to opt out.
+- **Added:** `AnalyzeOptions.onProgress`, a structured progress callback for
+  library, job-runner, and agent integrations that need status updates without
+  parsing terminal output.
 
 ### v0.5.0 — 2026-04-26
 

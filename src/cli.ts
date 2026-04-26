@@ -6,6 +6,8 @@ import { evaluateFailOn } from "./diff.js";
 import { scanDirectory } from "./directory-scanner.js";
 import type {
   AgentReadinessReport,
+  AnalyzeProgressEvent,
+  AnalyzeProgressStage,
   ContentDedupReport,
   DuplicateGroup,
   Ga4EnrichmentReport,
@@ -41,6 +43,7 @@ interface CliOptions {
   noContentDedup: boolean;
   noLinkGraph: boolean;
   noPersist: boolean;
+  noProgress: boolean;
   maxPages: number;
   outputPath: string | null;
   pdfReportPath: string | null;
@@ -106,6 +109,7 @@ Options:
   --from-directory <path>   Search local HTML files instead of crawling
   --json                     Print raw JSON instead of a text report
   --output <file>            Write the final report to a file
+  --no-progress              Disable the interactive stderr crawl progress line
   --no-persist               Skip persisting the crawl to ~/.config/seo-audit/crawls/.
                              Default: every successful audit is persisted.
                              Env: SEO_AUDIT_NO_PERSIST=1 sets the same.
@@ -197,6 +201,7 @@ function parseArgs(argv: string[]): CliOptions {
     noContentDedup: false,
     noLinkGraph: false,
     noPersist: false,
+    noProgress: false,
     maxPages: 10,
     outputPath: null,
     pdfReportPath: null,
@@ -482,6 +487,11 @@ function parseArgs(argv: string[]): CliOptions {
       continue;
     }
 
+    if (arg === "--no-progress") {
+      options.noProgress = true;
+      continue;
+    }
+
     if (arg === "--no-content-dedup") {
       options.noContentDedup = true;
       continue;
@@ -729,6 +739,123 @@ function mapToGa4Creds(creds: { key?: string; keyFile?: string }): {
     ...(creds.key !== undefined ? { ga4ServiceAccountKey: creds.key } : {}),
     ...(creds.keyFile !== undefined ? { ga4ServiceAccountKeyFile: creds.keyFile } : {}),
   };
+}
+
+interface CliProgressReporter {
+  onProgress?: (event: AnalyzeProgressEvent) => void;
+  finish: () => void;
+}
+
+function isTruthyEnv(value: string | undefined): boolean {
+  return value === "1" || value?.toLowerCase() === "true";
+}
+
+function createCliProgressReporter(options: CliOptions): CliProgressReporter {
+  const disabled =
+    options.noProgress ||
+    isTruthyEnv(process.env.SEO_AUDIT_NO_PROGRESS) ||
+    isTruthyEnv(process.env.CI) ||
+    !process.stderr.isTTY;
+
+  if (disabled) {
+    return { finish: () => undefined };
+  }
+
+  let wroteLine = false;
+
+  return {
+    onProgress(event) {
+      const columns = process.stderr.columns ?? 120;
+      const text = truncateMiddle(formatCliProgress(event), Math.max(20, columns - 1));
+      process.stderr.write(`\r\x1b[2K${text}`);
+      wroteLine = true;
+    },
+    finish() {
+      if (!wroteLine) {
+        return;
+      }
+
+      process.stderr.write("\r\x1b[2K");
+      wroteLine = false;
+    }
+  };
+}
+
+function formatCliProgress(event: AnalyzeProgressEvent): string {
+  const pages = formatProgressPages(event);
+  const queue = `queued: ${event.queuedUrls}`;
+  const active = event.activePages > 0 ? ` | active: ${event.activePages}` : "";
+
+  if (event.phase === "crawl-start") {
+    return `Crawling ${formatProgressUrl(event.url)} | ${pages} | ${queue}`;
+  }
+
+  if (event.phase === "page-start" || event.phase === "page-complete") {
+    const current = formatProgressUrl(event.finalUrl ?? event.url);
+    return `Crawling ${current} | ${pages} | ${queue}${active}`;
+  }
+
+  if (event.phase === "crawl-complete") {
+    return `Crawled | ${pages} | finalizing report...`;
+  }
+
+  const stage = formatProgressStage(event.stage);
+  if (event.phase === "analysis-start") {
+    return `Crawled | ${pages} | ${stage}...`;
+  }
+
+  return `Crawled | ${pages} | completed ${stage}`;
+}
+
+function formatProgressPages(event: AnalyzeProgressEvent): string {
+  if (event.maxPages === null) {
+    return `pages: ${event.crawledPages}`;
+  }
+
+  return `pages: ${event.crawledPages}/${event.maxPages}`;
+}
+
+function formatProgressStage(stage: AnalyzeProgressStage | undefined): string {
+  switch (stage) {
+    case "lighthouse":
+      return "running Lighthouse";
+    case "agent-readiness":
+      return "checking agent readiness";
+    case "gsc":
+      return "enriching from GSC";
+    case "ga4":
+      return "enriching from GA4";
+    default:
+      return "working";
+  }
+}
+
+function formatProgressUrl(value: string | undefined): string {
+  if (!value) {
+    return "";
+  }
+
+  try {
+    const url = new URL(value);
+    return `${url.hostname}${url.pathname}${url.search}`;
+  } catch {
+    return value;
+  }
+}
+
+function truncateMiddle(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  if (maxLength <= 3) {
+    return value.slice(0, maxLength);
+  }
+
+  const keep = maxLength - 3;
+  const startLength = Math.ceil(keep / 2);
+  const endLength = Math.floor(keep / 2);
+  return `${value.slice(0, startLength)}...${value.slice(value.length - endLength)}`;
 }
 
 function truncate(value: string, maxLength: number): string {
@@ -1183,8 +1310,9 @@ async function main(): Promise<void> {
       reports.push(report);
     } else {
       for (const url of options.urls) {
-        reports.push(
-          await analyzeSite(url, {
+        const progress = createCliProgressReporter(options);
+        try {
+          reports.push(await analyzeSite(url, {
             ...(options.concurrency !== null ? { concurrency: options.concurrency } : {}),
             excludePathPatterns: options.excludePathPatterns,
             fullSitemap: options.fullSitemap,
@@ -1215,8 +1343,11 @@ async function main(): Promise<void> {
             seedSitemap: options.seedSitemap,
             timeoutMs: options.timeoutMs,
             ...(options.userAgent ? { userAgent: options.userAgent } : {}),
-          })
-        );
+            ...(progress.onProgress ? { onProgress: progress.onProgress } : {}),
+          }));
+        } finally {
+          progress.finish();
+        }
       }
     }
 

@@ -10,6 +10,9 @@ export {
 export type { PageTextContent } from "./keywords.js";
 export type {
   AnalyzeOptions,
+  AnalyzeProgressEvent,
+  AnalyzeProgressPhase,
+  AnalyzeProgressStage,
   ContentCluster,
   ContentClusterMember,
   ContentDedupReport,
