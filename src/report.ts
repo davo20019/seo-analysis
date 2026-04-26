@@ -6,6 +6,8 @@ import type {
   SiteReport,
   Issue,
   Severity,
+  ContentDedupReport,
+  LinkGraphReport,
 } from "./types.js";
 import { chromium } from "playwright";
 
@@ -87,6 +89,8 @@ ${renderPages(report)}
 ${renderInfrastructure(report)}
 ${report.gsc ? `\n<h2>Search Console</h2>\n${renderGscSection(report.gsc)}` : ""}
 ${report.ga4 ? `\n<h2>Analytics</h2>\n${renderGa4Section(report.ga4)}` : ""}
+${report.contentDedup ? `\n<h2>Content duplicates</h2>\n${renderContentDedupSection(report.contentDedup)}` : ""}
+${report.linkGraph ? `\n<h2>Internal link equity</h2>\n${renderLinkGraphSection(report.linkGraph)}` : ""}
 ${(report.gsc || report.ga4) && report.summary.priorityIssues && report.summary.priorityIssues.length > 0
   ? `\n<h2>Priority issues</h2>\n${renderPriorityIssues(report.summary.priorityIssues)}`
   : ""}
@@ -107,6 +111,50 @@ function renderGa4Section(ga4: Ga4EnrichmentReport): string {
     return `<p class="muted">${escapeHtml(ga4.error)}</p>`;
   }
   return `<p class="muted">Property: <code>${escapeHtml(ga4.property)}</code> · window ${escapeHtml(ga4.startDate)} – ${escapeHtml(ga4.endDate)} · rows fetched ${ga4.totalRows} · matched to crawled pages ${ga4.matchedPages} · unmatched ${ga4.unmatchedRows}.</p>`;
+}
+
+function renderContentDedupSection(r: ContentDedupReport): string {
+  if (r.clusters.length === 0) {
+    return `<p class="muted">0 near-duplicate clusters detected (${r.pagesAnalyzed} pages analyzed, ${r.pagesSkipped} skipped due to short body).</p>`;
+  }
+  const firstCluster = r.clusters[0];
+  const summary = `<p class="muted">${r.clusters.length} cluster(s) covering ${r.totalNearDuplicatePages} pages · Jaccard threshold ${firstCluster.threshold} · shingle size ${firstCluster.shingleSize} words · ${r.pagesAnalyzed} pages analyzed (${r.pagesSkipped} skipped).</p>`;
+  const blocks = r.clusters.map((c) => {
+    const members = c.members.slice(0, 50);
+    const more = c.members.length > 50 ? `<li class="muted">… and ${c.members.length - 50} more</li>` : "";
+    const items = members
+      .map((m) => {
+        const tag = m.url === c.representativeUrl ? "★ " : "";
+        return `<li>${tag}<a href="${escapeHtml(m.url)}">${escapeHtml(m.url)}</a> <span class="muted">(similarity ${m.similarityToRepresentative.toFixed(2)})</span></li>`;
+      })
+      .join("");
+    return `<details>
+<summary><strong>${c.members.length} pages</strong> · representative: <a href="${escapeHtml(c.representativeUrl)}">${escapeHtml(c.representativeUrl)}</a></summary>
+<ul>${items}${more}</ul>
+</details>`;
+  }).join("\n");
+  return `${summary}\n${blocks}`;
+}
+
+function renderLinkGraphSection(r: LinkGraphReport): string {
+  if (r.pagesAnalyzed < 2) {
+    return `<p class="muted">Skipped: need ≥2 crawled pages, have ${r.pagesAnalyzed}.</p>`;
+  }
+  const summary = `<p class="muted">PageRank computed across ${r.pagesAnalyzed} crawled pages and ${r.edges} internal edges (damping ${r.damping}, ${r.iterations} iterations).</p>`;
+
+  const renderRow = (e: { url: string; pageRank: number; wordCount: number; incomingInternalLinks: number }) =>
+    `<tr><td><a href="${escapeHtml(e.url)}">${escapeHtml(e.url)}</a></td><td>${e.pageRank.toFixed(4)}</td><td>${e.wordCount}</td><td>${e.incomingInternalLinks}</td></tr>`;
+
+  const topTable = `<h3>Top by PageRank</h3>
+<table><thead><tr><th>URL</th><th>PageRank</th><th>Words</th><th>Incoming</th></tr></thead><tbody>${r.topPages.map(renderRow).join("")}</tbody></table>`;
+
+  const underTable = r.underLinkedImportantPages.length === 0
+    ? `<p class="muted">No underlinked important pages (high content, low rank) detected.</p>`
+    : `<h3>Underlinked important pages</h3>
+<p class="muted">High word-count pages with below-median PageRank.</p>
+<table><thead><tr><th>URL</th><th>PageRank</th><th>Words</th><th>Incoming</th></tr></thead><tbody>${r.underLinkedImportantPages.map(renderRow).join("")}</tbody></table>`;
+
+  return `${summary}\n${topTable}\n${underTable}`;
 }
 
 function renderPriorityIssues(entries: PrioritySummaryEntry[]): string {
@@ -255,12 +303,16 @@ function renderPages(report: SiteReport): string {
   if (report.pages.length === 0) return `<p class="muted">No pages crawled.</p>`;
   const showGsc = report.pages.some((p) => p.metrics?.gsc);
   const showGa4 = report.pages.some((p) => p.metrics?.ga4);
+  const showRank = report.pages.some((p) => p.linkGraph);
   const rows = report.pages.map((p) => {
     const gscCell = showGsc
       ? `<td>${p.metrics?.gsc ? `${p.metrics.gsc.impressions} impr / ${p.metrics.gsc.clicks} clk / pos ${p.metrics.gsc.position.toFixed(1)}` : ""}</td>`
       : "";
     const ga4Cell = showGa4
       ? `<td>${p.metrics?.ga4 ? `${p.metrics.ga4.sessions} sess / ${p.metrics.ga4.screenPageViews} pv / eng ${(p.metrics.ga4.engagementRate * 100).toFixed(1)}%` : ""}</td>`
+      : "";
+    const rankCell = showRank
+      ? `<td>${p.linkGraph ? p.linkGraph.pageRank.toFixed(4) : ""}</td>`
       : "";
     return `<tr>
 <td><a href="${escapeHtml(p.finalUrl)}">${escapeHtml(p.finalUrl)}</a></td>
@@ -269,11 +321,13 @@ function renderPages(report: SiteReport): string {
 <td>${p.issues.length}</td>
 ${gscCell}
 ${ga4Cell}
+${rankCell}
 </tr>`;
   }).join("");
   const gscHead = showGsc ? "<th>GSC</th>" : "";
   const ga4Head = showGa4 ? "<th>GA4</th>" : "";
-  return `<table><thead><tr><th>URL</th><th>Title</th><th>Status</th><th>Issues</th>${gscHead}${ga4Head}</tr></thead><tbody>${rows}</tbody></table>`;
+  const rankHead = showRank ? "<th>PageRank</th>" : "";
+  return `<table><thead><tr><th>URL</th><th>Title</th><th>Status</th><th>Issues</th>${gscHead}${ga4Head}${rankHead}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function renderInfrastructure(report: SiteReport): string {

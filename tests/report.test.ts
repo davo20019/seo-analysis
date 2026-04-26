@@ -110,6 +110,90 @@ maybeDescribe("renderPdfReport (integration)", () => {
   }, 60000);
 });
 
+describe("renderHtmlReport with v0.5 sections", () => {
+  it("renders the Content duplicates section when report.contentDedup is present", () => {
+    const report: SiteReport = {
+      startUrl: "https://example.com",
+      infrastructure: {
+        robotsTxt: { url: "", present: false, status: null, sitemaps: [], blocksAllCrawlers: false },
+        sitemap: { url: "", present: false, status: null, urlCount: 0, knownUrls: 0, coverageLimited: false, isIndex: false },
+        llmsTxt: { url: "", present: false, status: null, isEmpty: true },
+        issues: [],
+      },
+      summary: {
+        crawledPages: 0,
+        issueTotals: { high: 0, medium: 0, low: 0 },
+        pagesWithNoindex: 0, pagesMissingTitle: 0, pagesMissingDescription: 0,
+        internalLinksChecked: 0, pagesWithBrokenInternalLinks: 0,
+        pagesWithRedirectingInternalLinks: 0, pagesWithAnchorTextIssues: 0,
+        pagesWithFewIncomingInternalLinks: 0, orphanCandidatePages: 0,
+        pagesMissingFromSitemap: 0, pagesWithHreflangIssues: 0,
+        topIssues: [], duplicateTitles: [], duplicateMetaDescriptions: [],
+      },
+      pages: [],
+      lighthouse: [],
+      contentDedup: {
+        clusters: [
+          {
+            representativeUrl: "https://example.com/a",
+            members: [
+              { url: "https://example.com/a", similarityToRepresentative: 1.0 },
+              { url: "https://example.com/b", similarityToRepresentative: 0.92 },
+            ],
+            shingleSize: 5,
+            threshold: 0.85,
+          },
+        ],
+        totalNearDuplicatePages: 2,
+        pagesAnalyzed: 2,
+        pagesSkipped: 0,
+      },
+    };
+    const html = renderHtmlReport(report);
+    expect(html).toContain("<h2>Content duplicates</h2>");
+    expect(html).toContain("https://example.com/a");
+    expect(html).toContain("0.92");
+  });
+
+  it("renders the Internal link equity section when report.linkGraph is present", () => {
+    const report: SiteReport = {
+      startUrl: "https://example.com",
+      infrastructure: {
+        robotsTxt: { url: "", present: false, status: null, sitemaps: [], blocksAllCrawlers: false },
+        sitemap: { url: "", present: false, status: null, urlCount: 0, knownUrls: 0, coverageLimited: false, isIndex: false },
+        llmsTxt: { url: "", present: false, status: null, isEmpty: true },
+        issues: [],
+      },
+      summary: {
+        crawledPages: 0,
+        issueTotals: { high: 0, medium: 0, low: 0 },
+        pagesWithNoindex: 0, pagesMissingTitle: 0, pagesMissingDescription: 0,
+        internalLinksChecked: 0, pagesWithBrokenInternalLinks: 0,
+        pagesWithRedirectingInternalLinks: 0, pagesWithAnchorTextIssues: 0,
+        pagesWithFewIncomingInternalLinks: 0, orphanCandidatePages: 0,
+        pagesMissingFromSitemap: 0, pagesWithHreflangIssues: 0,
+        topIssues: [], duplicateTitles: [], duplicateMetaDescriptions: [],
+      },
+      pages: [],
+      lighthouse: [],
+      linkGraph: {
+        pagesAnalyzed: 5, edges: 8, iterations: 20, damping: 0.85,
+        topPages: [
+          { url: "https://example.com/", pageRank: 0.42, wordCount: 1500, incomingInternalLinks: 4 },
+        ],
+        underLinkedImportantPages: [
+          { url: "https://example.com/big", pageRank: 0.05, wordCount: 3000, incomingInternalLinks: 1 },
+        ],
+      },
+    };
+    const html = renderHtmlReport(report);
+    expect(html).toContain("<h2>Internal link equity</h2>");
+    expect(html).toContain("0.4200");
+    expect(html).toContain("Underlinked important pages");
+    expect(html).toContain("https://example.com/big");
+  });
+});
+
 describe("renderHtmlReport with GA4", () => {
   it("renders an Analytics section and a GA4 column when ga4 metrics are present", () => {
     const report: SiteReport = {
