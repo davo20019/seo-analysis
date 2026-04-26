@@ -1,6 +1,8 @@
 import { readFile, writeFile } from "node:fs/promises";
 
 import { analyzeSite } from "./analyzer.js";
+import { persistCrawl, loadCrawl, recentCrawlsForUrl } from "./persist.js";
+import { evaluateFailOn } from "./diff.js";
 import { scanDirectory } from "./directory-scanner.js";
 import type {
   AgentReadinessReport,
@@ -34,6 +36,7 @@ interface CliOptions {
   json: boolean;
   lighthouse: boolean;
   lighthousePages: number;
+  noPersist: boolean;
   maxPages: number;
   outputPath: string | null;
   pdfReportPath: string | null;
@@ -97,7 +100,13 @@ Options:
   --from-directory <path>   Search local HTML files instead of crawling
   --json                     Print raw JSON instead of a text report
   --output <file>            Write the final report to a file
-  --fail-on <severity>       Diff mode only: exit non-zero if issues at <severity> increased (high|medium|low)
+  --no-persist               Skip persisting the crawl to ~/.config/seo-audit/crawls/.
+                             Default: every successful audit is persisted.
+                             Env: SEO_AUDIT_NO_PERSIST=1 sets the same.
+  --fail-on <severity>       Exit non-zero if issues at <severity> increased.
+                             Fresh-audit mode: compares to the previous persisted crawl.
+                             Diff mode: compares the two passed report files.
+                             One of: high, medium, low.
   --html-report <file>       Write a polished HTML report to <file>
   --pdf-report <file>        Write a PDF report to <file> (uses Playwright/Chromium)
   --user-agent <string>      Override the HTTP User-Agent sent by the crawler
@@ -168,6 +177,7 @@ function parseArgs(argv: string[]): CliOptions {
     json: false,
     lighthouse: false,
     lighthousePages: 1,
+    noPersist: false,
     maxPages: 10,
     outputPath: null,
     pdfReportPath: null,
@@ -440,6 +450,11 @@ function parseArgs(argv: string[]): CliOptions {
       continue;
     }
 
+    if (arg === "--no-persist") {
+      options.noPersist = true;
+      continue;
+    }
+
     if (arg === "--render-timeout-ms") {
       options.renderTimeoutMs = parseNumberValue(
         requireValue(argv, index, "--render-timeout-ms"),
@@ -465,6 +480,25 @@ function parseArgs(argv: string[]): CliOptions {
 
     if (arg.startsWith("--output=")) {
       options.outputPath = arg.split("=")[1] ?? null;
+      continue;
+    }
+
+    if (arg === "--fail-on") {
+      const v = requireValue(argv, index, "--fail-on");
+      if (v !== "high" && v !== "medium" && v !== "low") {
+        throw new Error("--fail-on must be high|medium|low");
+      }
+      options.failOnSeverity = v;
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--fail-on=")) {
+      const v = arg.split("=").slice(1).join("=");
+      if (v !== "high" && v !== "medium" && v !== "low") {
+        throw new Error("--fail-on must be high|medium|low");
+      }
+      options.failOnSeverity = v as "high" | "medium" | "low";
       continue;
     }
 
@@ -1073,6 +1107,53 @@ async function main(): Promise<void> {
             ...(options.userAgent ? { userAgent: options.userAgent } : {}),
           })
         );
+      }
+    }
+
+    // Phase 3: persist every report first, then run fail-on checks. Two-pass
+    // ordering matters in the multi-URL case: if URL1 regresses, we don't want
+    // to skip persisting URL2 just because process.exit fires mid-loop.
+    const persistDisabled =
+      options.noPersist ||
+      process.env.SEO_AUDIT_NO_PERSIST === "1" ||
+      process.env.SEO_AUDIT_NO_PERSIST === "true";
+
+    const previousByReport = new Map<SiteReport, string | null>();
+
+    for (const report of reports) {
+      let previousPath: string | null = null;
+      if (!persistDisabled) {
+        try {
+          const result = await persistCrawl(report);
+          previousPath = result.previousPath;
+          if (result.isFirstForHost) {
+            console.error(
+              `Persisting crawl to ${result.path}. Use --no-persist (or SEO_AUDIT_NO_PERSIST=1) to opt out.`,
+            );
+          }
+        } catch (err) {
+          console.error(`Warning: failed to persist crawl: ${(err as Error).message}`);
+        }
+      } else if (options.failOnSeverity) {
+        const recent = await recentCrawlsForUrl(report.startUrl, 1);
+        previousPath = recent[0]?.path ?? null;
+      }
+      previousByReport.set(report, previousPath);
+    }
+
+    if (options.failOnSeverity) {
+      for (const report of reports) {
+        const previousPath = previousByReport.get(report) ?? null;
+        const previous = previousPath ? await loadCrawl(previousPath) : null;
+        const decision = evaluateFailOn(report, previous, options.failOnSeverity);
+        if (!previous) {
+          console.error(
+            `No prior crawl found for ${report.startUrl}; skipping --fail-on regression check.`,
+          );
+        } else if (decision.shouldFail) {
+          console.error(`--fail-on ${options.failOnSeverity}: ${decision.reason}`);
+          process.exit(1);
+        }
       }
     }
 
