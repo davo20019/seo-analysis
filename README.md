@@ -431,13 +431,16 @@ reset.
   alongside the existing Title / Status / Issues columns.
 - **Note for `--fail-on` cron users:** the new
   `CONTENT_NEAR_DUPLICATE` issue is medium severity and will surface
-  on most e-commerce / programmatic-SEO sites. The fresh-mode
-  `--fail-on` introduced in v0.4.0 only fails on regressions vs. the
-  previous persisted crawl, so users with at least one prior persisted
-  crawl are unaffected. Users running `--fail-on medium` *without* a
-  baseline (brand-new install in fresh CI) may see new failures on the
-  first v0.5 run. Recovery: pass `--no-content-dedup`, raise
-  `--fail-on high`, or run the audit once to seed a baseline.
+  on most e-commerce / programmatic-SEO sites. **If you have an existing
+  persisted baseline from v0.4 (or earlier),** the first v0.5 run may
+  exit non-zero because the new check wasn't running when the baseline
+  was recorded — the new findings look like a regression to the diff
+  comparison. Recovery: run the audit once with `--no-content-dedup`
+  to refresh a clean baseline, then re-enable it; or raise
+  `--fail-on high`; or pass `--no-content-dedup` permanently to opt
+  out. Users on a fresh install (no prior crawl) are unaffected — the
+  first run skips the regression check entirely with a "No prior crawl
+  found" warning and exits 0.
 
 ### v0.4.0 — 2026-04-26
 
