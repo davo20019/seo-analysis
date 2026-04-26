@@ -56,6 +56,7 @@ interface CliOptions {
   diffMode: boolean;
   diffOldPath: string | null;
   diffNewPath: string | null;
+  diffAutoUrl: string | null;
   failOnSeverity: "high" | "medium" | "low" | null;
 }
 
@@ -63,7 +64,8 @@ function printHelp(): void {
   console.log(`SEO Analysis CLI
 
 Subcommands:
-  diff <old.json> <new.json>  Compare two report JSON files
+  diff <url>                  Compare the two most recent persisted crawls for <url>
+  diff <old.json> <new.json>  Compare two report JSON files explicitly
 
 Usage:
   npm run dev -- <url> [more-urls] [options]
@@ -145,6 +147,15 @@ function parseNumberValue(rawValue: string, flag: string): number {
   return parsed;
 }
 
+function isHttpUrl(s: string): boolean {
+  try {
+    const u = new URL(s);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function validatePatterns(patterns: string[], flag: string): void {
   for (const pattern of patterns) {
     try {
@@ -197,13 +208,20 @@ function parseArgs(argv: string[]): CliOptions {
     diffMode: false,
     diffOldPath: null,
     diffNewPath: null,
+    diffAutoUrl: null,
     failOnSeverity: null
   };
 
   if (argv[0] === "diff") {
     options.diffMode = true;
-    options.diffOldPath = argv[1] ?? null;
-    options.diffNewPath = argv[2] ?? null;
+    const arg1 = argv[1];
+    const arg2 = argv[2];
+    if (arg1 && isHttpUrl(arg1) && !arg2) {
+      options.diffAutoUrl = arg1;
+    } else if (arg1 && arg2) {
+      options.diffOldPath = arg1;
+      options.diffNewPath = arg2;
+    }
 
     for (let index = 3; index < argv.length; index += 1) {
       const arg = argv[index];
@@ -1034,18 +1052,35 @@ async function main(): Promise<void> {
     }
 
     if (options.diffMode) {
-      if (!options.diffOldPath || !options.diffNewPath) {
-        throw new Error("diff requires two arguments: <old.json> <new.json>");
-      }
-      const [oldRaw, newRaw] = await Promise.all([
-        readFile(options.diffOldPath, "utf8"),
-        readFile(options.diffNewPath, "utf8"),
-      ]);
-      const oldParsed = JSON.parse(oldRaw);
-      const newParsed = JSON.parse(newRaw);
-      const oldReport = Array.isArray(oldParsed) ? oldParsed[0] : oldParsed;
-      const newReport = Array.isArray(newParsed) ? newParsed[0] : newParsed;
       const { diffSiteReports, renderDiffText, renderDiffJson } = await import("./diff.js");
+      let oldReport: SiteReport;
+      let newReport: SiteReport;
+
+      if (options.diffAutoUrl) {
+        const recent = await recentCrawlsForUrl(options.diffAutoUrl, 2);
+        if (recent.length < 2) {
+          throw new Error(
+            `Need at least 2 persisted crawls for ${options.diffAutoUrl} (have ${recent.length}). ` +
+            `Run \`seo-audit ${options.diffAutoUrl}\` first, or pass explicit paths: ` +
+            `\`seo-audit diff <old.json> <new.json>\`.`,
+          );
+        }
+        oldReport = await loadCrawl(recent[1].path);
+        newReport = await loadCrawl(recent[0].path);
+        console.error(`Comparing ${recent[1].timestamp} → ${recent[0].timestamp}`);
+      } else if (options.diffOldPath && options.diffNewPath) {
+        const [oldRaw, newRaw] = await Promise.all([
+          readFile(options.diffOldPath, "utf8"),
+          readFile(options.diffNewPath, "utf8"),
+        ]);
+        const oldParsed = JSON.parse(oldRaw);
+        const newParsed = JSON.parse(newRaw);
+        oldReport = Array.isArray(oldParsed) ? oldParsed[0] : oldParsed;
+        newReport = Array.isArray(newParsed) ? newParsed[0] : newParsed;
+      } else {
+        throw new Error("diff requires either <url> or <old.json> <new.json>");
+      }
+
       const diff = diffSiteReports(oldReport, newReport);
       const out = options.json ? renderDiffJson(diff) : renderDiffText(diff);
       if (options.outputPath) {
