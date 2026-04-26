@@ -187,3 +187,37 @@ function regressed(s: PageDelta): boolean {
 export function renderDiffJson(diff: SiteReportDiff): string {
   return JSON.stringify(diff, null, 2);
 }
+
+export interface FailOnDecision {
+  shouldFail: boolean;
+  reason: string;
+  delta: number;
+}
+
+export function evaluateFailOn(
+  current: SiteReport,
+  previous: SiteReport | null,
+  severity: "high" | "medium" | "low",
+): FailOnDecision {
+  if (!previous) {
+    return {
+      shouldFail: false,
+      reason: "No prior crawl found; skipping regression check.",
+      delta: 0,
+    };
+  }
+  const diff = diffSiteReports(previous, current);
+  const delta = diff.severityDelta[severity];
+  if (delta > 0) {
+    return {
+      shouldFail: true,
+      reason: `${delta} more ${severity}-severity issue(s) than previous crawl.`,
+      delta,
+    };
+  }
+  return {
+    shouldFail: false,
+    reason: `No regression at ${severity} severity.`,
+    delta,
+  };
+}

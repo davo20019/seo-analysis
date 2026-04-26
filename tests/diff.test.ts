@@ -136,3 +136,40 @@ describe("renderDiffJson", () => {
     expect(JSON.parse(json)).toEqual(diff);
   });
 });
+
+import { evaluateFailOn } from "../src/diff.js";
+
+describe("evaluateFailOn", () => {
+  it("does not fail when previous is null (first run)", () => {
+    const current = fixture({ summary: { ...fixture({}).summary, issueTotals: { high: 5, medium: 0, low: 0 } } });
+    const decision = evaluateFailOn(current, null, "high");
+    expect(decision.shouldFail).toBe(false);
+    expect(decision.reason).toMatch(/skipping/i);
+    expect(decision.delta).toBe(0);
+  });
+
+  it("does not fail when severity delta is zero", () => {
+    const previous = fixture({ summary: { ...fixture({}).summary, issueTotals: { high: 2, medium: 0, low: 0 } } });
+    const current = fixture({ summary: { ...fixture({}).summary, issueTotals: { high: 2, medium: 0, low: 0 } } });
+    const decision = evaluateFailOn(current, previous, "high");
+    expect(decision.shouldFail).toBe(false);
+    expect(decision.delta).toBe(0);
+  });
+
+  it("fails when severity delta is positive (regression)", () => {
+    const previous = fixture({ summary: { ...fixture({}).summary, issueTotals: { high: 2, medium: 0, low: 0 } } });
+    const current = fixture({ summary: { ...fixture({}).summary, issueTotals: { high: 5, medium: 0, low: 0 } } });
+    const decision = evaluateFailOn(current, previous, "high");
+    expect(decision.shouldFail).toBe(true);
+    expect(decision.delta).toBe(3);
+    expect(decision.reason).toMatch(/3 more high/i);
+  });
+
+  it("does not fail when severity delta is negative (improvement)", () => {
+    const previous = fixture({ summary: { ...fixture({}).summary, issueTotals: { high: 5, medium: 0, low: 0 } } });
+    const current = fixture({ summary: { ...fixture({}).summary, issueTotals: { high: 3, medium: 0, low: 0 } } });
+    const decision = evaluateFailOn(current, previous, "high");
+    expect(decision.shouldFail).toBe(false);
+    expect(decision.delta).toBe(-2);
+  });
+});
