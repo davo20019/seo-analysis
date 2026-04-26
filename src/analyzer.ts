@@ -29,6 +29,8 @@ import {
   probeWellKnownEndpoints,
   type ProbeFetcher,
 } from "./checks/agent-readiness-checks.js";
+import { buildContentDedupReport } from "./checks/content-dedup.js";
+import { buildLinkGraphReport } from "./checks/link-graph.js";
 import { applyEnrichment } from "./enrichment/index.js";
 import { GscEnrichmentSource } from "./enrichment/gsc.js";
 import { Ga4EnrichmentSource } from "./enrichment/ga4.js";
@@ -2717,6 +2719,14 @@ export async function analyzeSite(
     });
   }
 
+  const linkGraph = rawOptions.linkGraph !== false
+    ? buildLinkGraphReport(pages)
+    : undefined;
+
+  const contentDedup = rawOptions.contentDedup !== false
+    ? buildContentDedupReport(pages)
+    : undefined;
+
   let gsc;
   if (rawOptions.gsc) {
     const serviceAccount: ServiceAccountSource | null = rawOptions.gscServiceAccountKey
@@ -2771,7 +2781,9 @@ export async function analyzeSite(
     topTerms,
     ...(agentReadiness ? { agentReadiness } : {}),
     ...(gsc ? { gsc } : {}),
-    ...(ga4 ? { ga4 } : {})
+    ...(ga4 ? { ga4 } : {}),
+    ...(contentDedup ? { contentDedup } : {}),
+    ...(linkGraph ? { linkGraph } : {})
   };
   } finally {
     if (renderBrowser) {
