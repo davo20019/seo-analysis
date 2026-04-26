@@ -10,6 +10,9 @@ export {
 export type { PageTextContent } from "./keywords.js";
 export type {
   AnalyzeOptions,
+  ContentCluster,
+  ContentClusterMember,
+  ContentDedupReport,
   DuplicateGroup,
   InfrastructureReport,
   Issue,
@@ -19,6 +22,9 @@ export type {
   LighthouseMetrics,
   LighthouseReport,
   LighthouseScores,
+  LinkGraphPage,
+  LinkGraphReport,
+  LinkGraphTopEntry,
   PageChecks,
   PageReport,
   Severity,
