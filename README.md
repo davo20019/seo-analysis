@@ -53,6 +53,8 @@ Every successful audit is auto-persisted to `~/.config/seo-audit/crawls/`; `seo-
 - optional Google Search Console enrichment (`--gsc`) merging clicks/impressions/CTR/avg-position per crawled URL, plus a "Priority issues" summary that ranks high/medium-severity issues by traffic exposure
 - optional Google Analytics 4 enrichment (`--ga4`) merging sessions/pageviews/users/engagement-rate per crawled URL; feeds the "Priority issues" summary as a fallback when GSC isn't available
 - crawl persistence + diffing: every audit auto-saves to `~/.config/seo-audit/crawls/<host>/<timestamp>.json`; `seo-audit diff <url>` auto-picks the two most recent crawls, and `--fail-on <severity>` gates CI/cron against regressions vs. the previous persisted crawl
+- near-duplicate content detection (MinHash, Jaccard ≥ 0.85 over 5-word shingles): clusters of pages with substantially similar body text get a "Content duplicates" summary section + medium-severity `CONTENT_NEAR_DUPLICATE` per-page issue. Skip with `--no-content-dedup`.
+- internal link equity (PageRank, damping 0.85, 20 iterations): per-page `pageRank` score plus an "underlinked important pages" highlight for high-content pages with below-median rank — the "your money page gets 1 internal link" insight. Skip with `--no-link-graph`.
 
 ## Install
 
@@ -410,6 +412,32 @@ manageable. `rm -rf ~/.config/seo-audit/crawls/<host>/` if you ever want to
 reset.
 
 ## CHANGELOG
+
+### v0.5.0 — 2026-04-26
+
+- **Added:** near-duplicate content detection. Audits now include a
+  `report.contentDedup` summary with clusters of pages whose body text
+  exceeds 85% Jaccard similarity. Each cluster member gets a new
+  medium-severity `CONTENT_NEAR_DUPLICATE` issue. Skip via
+  `--no-content-dedup`.
+- **Added:** internal link-equity (PageRank) computation. Audits now
+  include a `report.linkGraph` summary with the top 10 pages by
+  PageRank and an "underlinked important pages" list (high content,
+  low rank — the "your money page gets 1 internal link" finding).
+  Each `PageReport` gains a `linkGraph.pageRank` field. Skip via
+  `--no-link-graph`.
+- **Changed:** the HTML report Pages table grows a conditional
+  `PageRank` column when any page has link-graph metrics, sortable
+  alongside the existing Title / Status / Issues columns.
+- **Note for `--fail-on` cron users:** the new
+  `CONTENT_NEAR_DUPLICATE` issue is medium severity and will surface
+  on most e-commerce / programmatic-SEO sites. The fresh-mode
+  `--fail-on` introduced in v0.4.0 only fails on regressions vs. the
+  previous persisted crawl, so users with at least one prior persisted
+  crawl are unaffected. Users running `--fail-on medium` *without* a
+  baseline (brand-new install in fresh CI) may see new failures on the
+  first v0.5 run. Recovery: pass `--no-content-dedup`, raise
+  `--fail-on high`, or run the audit once to seed a baseline.
 
 ### v0.4.0 — 2026-04-26
 
