@@ -89,6 +89,7 @@ export interface PageReport {
   discoveredLinks: string[];
   keywordMatches?: KeywordMatch[];
   metrics?: PageMetrics;
+  linkGraph?: LinkGraphPage;
 }
 
 export interface PageMetrics {
@@ -306,6 +307,47 @@ export interface SiteReport {
   agentReadiness?: AgentReadinessReport;
   gsc?: GscEnrichmentReport;
   ga4?: Ga4EnrichmentReport;
+  contentDedup?: ContentDedupReport;
+  linkGraph?: LinkGraphReport;
+}
+
+export interface ContentClusterMember {
+  url: string;
+  similarityToRepresentative: number;  // 0..1 Jaccard
+}
+
+export interface ContentCluster {
+  representativeUrl: string;
+  members: ContentClusterMember[];
+  shingleSize: number;
+  threshold: number;
+}
+
+export interface ContentDedupReport {
+  clusters: ContentCluster[];
+  totalNearDuplicatePages: number;
+  pagesAnalyzed: number;
+  pagesSkipped: number;
+}
+
+export interface LinkGraphPage {
+  pageRank: number;
+}
+
+export interface LinkGraphTopEntry {
+  url: string;
+  pageRank: number;
+  wordCount: number;
+  incomingInternalLinks: number;
+}
+
+export interface LinkGraphReport {
+  pagesAnalyzed: number;
+  edges: number;
+  iterations: number;
+  damping: number;
+  topPages: LinkGraphTopEntry[];
+  underLinkedImportantPages: LinkGraphTopEntry[];
 }
 
 export interface AnalyzeOptions {
@@ -339,4 +381,6 @@ export interface AnalyzeOptions {
   ga4Days?: number;
   ga4ServiceAccountKey?: string;
   ga4ServiceAccountKeyFile?: string;
+  contentDedup?: boolean;
+  linkGraph?: boolean;
 }
