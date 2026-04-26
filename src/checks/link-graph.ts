@@ -83,10 +83,12 @@ export function buildLinkGraphReport(pages: PageReport[]): LinkGraphReport {
   // Underlinked important pages: above-median wordCount + below-median pageRank.
   const medianWords = median(pages.map((p) => p.checks.wordCount));
   const medianRank = median(pr);
-  const underLinkedImportantPages = allEntries
-    .filter((_e, i) => pages[i].checks.wordCount > medianWords && pr[i] <= medianRank)
-    .sort((a, b) => b.wordCount - a.wordCount)
-    .slice(0, TOP_N);
+  const underLinkedImportantPages = edgeCount === 0
+    ? []
+    : allEntries
+        .filter((_e, i) => pages[i].checks.wordCount > medianWords && pr[i] <= medianRank)
+        .sort((a, b) => b.wordCount - a.wordCount)
+        .slice(0, TOP_N);
 
   return {
     pagesAnalyzed: N,

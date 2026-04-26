@@ -176,6 +176,21 @@ describe("buildLinkGraphReport — underlinked important pages heuristic", () =>
     expect(urls.indexOf("https://x/big1")).toBeLessThan(urls.indexOf("https://x/big2"));
     expect(urls.indexOf("https://x/big2")).toBeLessThan(urls.indexOf("https://x/big3"));
   });
+
+  it("returns empty underLinkedImportantPages when there are zero internal edges", () => {
+    // 5 pages, all with no internal links → all dangling → all at median rank.
+    // The heuristic would otherwise flood with false positives.
+    const pages = [
+      makePage("https://x/big1", { wordCount: 2000 }),
+      makePage("https://x/big2", { wordCount: 1500 }),
+      makePage("https://x/small1", { wordCount: 50 }),
+      makePage("https://x/small2", { wordCount: 50 }),
+      makePage("https://x/small3", { wordCount: 50 }),
+    ];
+    const r = buildLinkGraphReport(pages);
+    expect(r.edges).toBe(0);
+    expect(r.underLinkedImportantPages).toEqual([]);
+  });
 });
 
 describe("buildLinkGraphReport — determinism", () => {
