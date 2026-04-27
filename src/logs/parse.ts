@@ -49,8 +49,69 @@ export async function* parseLogStream(
 
 function parseLine(line: string, format: LogFormat): RawLogEntry | null {
   if (format === "combined") return parseCombined(line);
-  // Other parsers are added in Task 3.
+  if (format === "json") return parseGenericJson(line);
+  if (format === "cloudflare") return parseCloudflare(line);
+  if (format === "fastly") return parseFastly(line);
   return null;
+}
+
+function parseGenericJson(line: string): RawLogEntry | null {
+  let obj: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(line);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    obj = parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  return {
+    ip:        typeof obj.ip === "string" ? obj.ip : "",
+    timestamp: typeof obj.timestamp === "string" ? obj.timestamp : "",
+    method:    typeof obj.method === "string" ? obj.method : "",
+    url:       typeof obj.url === "string" ? obj.url : "",
+    status:    typeof obj.status === "number" ? obj.status : Number.parseInt(String(obj.status ?? ""), 10),
+    userAgent: typeof obj.userAgent === "string" ? obj.userAgent : ""
+  };
+}
+
+function parseCloudflare(line: string): RawLogEntry | null {
+  let obj: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(line);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    obj = parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const status = obj.EdgeResponseStatus;
+  return {
+    ip:        typeof obj.ClientIP === "string" ? obj.ClientIP : "",
+    timestamp: typeof obj.EdgeStartTimestamp === "string" ? obj.EdgeStartTimestamp : "",
+    method:    typeof obj.ClientRequestMethod === "string" ? obj.ClientRequestMethod : "",
+    url:       typeof obj.ClientRequestURI === "string" ? obj.ClientRequestURI : "",
+    status:    typeof status === "number" ? status : Number.parseInt(String(status ?? ""), 10),
+    userAgent: typeof obj.ClientRequestUserAgent === "string" ? obj.ClientRequestUserAgent : ""
+  };
+}
+
+function parseFastly(line: string): RawLogEntry | null {
+  let obj: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(line);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    obj = parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const status = obj.status;
+  return {
+    ip:        typeof obj.client_ip === "string" ? obj.client_ip : "",
+    timestamp: typeof obj.timestamp === "string" ? obj.timestamp : "",
+    method:    typeof obj.request_method === "string" ? obj.request_method : "",
+    url:       typeof obj.url === "string" ? obj.url : "",
+    status:    typeof status === "number" ? status : Number.parseInt(String(status ?? ""), 10),
+    userAgent: typeof obj.user_agent === "string" ? obj.user_agent : ""
+  };
 }
 
 function parseCombined(line: string): RawLogEntry | null {

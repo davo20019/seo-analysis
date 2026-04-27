@@ -67,3 +67,47 @@ describe("parseLogStream — combined", () => {
     expect(entries[0].url).toBe("/a b");
   });
 });
+
+describe("parseLogStream — json variants", () => {
+  it("parses Cloudflare format", async () => {
+    const src = readFileSync(join(FIXTURES, "cloudflare.json"), "utf8");
+    const entries = await collect(parseLogStream(streamFromString(src), "cloudflare"));
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({
+      ip: "66.249.66.1",
+      method: "GET",
+      url: "/index.html",
+      status: 200,
+    });
+    expect(entries[0].timestamp).toBe("2026-04-25T10:15:23Z");
+    expect(entries[0].userAgent).toContain("Googlebot");
+  });
+
+  it("parses Fastly format", async () => {
+    const src = readFileSync(join(FIXTURES, "fastly.json"), "utf8");
+    const entries = await collect(parseLogStream(streamFromString(src), "fastly"));
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({
+      ip: "66.249.66.1",
+      method: "GET",
+      url: "/index.html",
+      status: 200,
+    });
+  });
+
+  it("parses generic JSON format", async () => {
+    const src = readFileSync(join(FIXTURES, "generic.json"), "utf8");
+    const entries = await collect(parseLogStream(streamFromString(src), "json"));
+    expect(entries).toHaveLength(2);
+    expect(entries[0].url).toBe("/index.html");
+  });
+
+  it("auto-detects each JSON variant", () => {
+    const cf = readFileSync(join(FIXTURES, "cloudflare.json"), "utf8").split("\n").filter(Boolean);
+    expect(detectLogFormat(cf)).toBe("cloudflare");
+    const fastly = readFileSync(join(FIXTURES, "fastly.json"), "utf8").split("\n").filter(Boolean);
+    expect(detectLogFormat(fastly)).toBe("fastly");
+    const generic = readFileSync(join(FIXTURES, "generic.json"), "utf8").split("\n").filter(Boolean);
+    expect(detectLogFormat(generic)).toBe("json");
+  });
+});

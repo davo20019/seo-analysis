@@ -1,0 +1,2 @@
+{"client_ip":"66.249.66.1","timestamp":"2026-04-25T10:15:23Z","request_method":"GET","url":"/index.html","status":200,"user_agent":"Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)","fastly_id":"abc123"}
+{"client_ip":"40.77.167.10","timestamp":"2026-04-25T10:16:00Z","request_method":"GET","url":"/pricing","status":200,"user_agent":"Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)","fastly_id":"abc124"}
