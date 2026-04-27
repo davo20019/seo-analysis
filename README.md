@@ -123,6 +123,8 @@ machine-readable for agents and scripts.
 | Flag | Description |
 |---|---|
 | `--output <path>` | Write JSON report to a file (default: stdout). |
+| `--extract <json>` | Inline JSON of extraction rules. Mutually exclusive with `--extract-file`. |
+| `--extract-file <path>` | JSON file of extraction rules. |
 | `--no-progress` | Disable the interactive stderr crawl progress line. |
 | `--no-persist` | Skip persisting the crawl to `~/.config/seo-audit/crawls/`. Default: every successful audit is persisted. Set `SEO_AUDIT_NO_PERSIST=1` to default the same. |
 | `--fail-on <severity>` | Exit non-zero if issues at `<severity>` increased. Fresh-audit mode: compares to the previous persisted crawl. Diff mode: compares the two passed report files. One of: `high`, `medium`, `low`. |
@@ -162,6 +164,52 @@ Notes on `--render`:
 - Rendering is slower than raw fetch (typical: 2–10s per page). Use `--max-pages` to scope.
 - Render uses `--retries` (default 3) with exponential backoff on transient failures (navigation timeouts, ad-script hangs).
 - Known limitation: `redirectChain` is not captured for rendered pages in v1. The `finalUrl` is still accurate.
+
+### Custom extractions
+
+Define CSS-selector-based field extractions and pull them off every crawled
+page — useful for content audits, schema/data validation at scale, migration
+QA, and competitive teardowns.
+
+```bash
+seo-audit https://example.com \
+  --extract '{"h1":"h1","price":"[itemprop=price]@content"}' \
+  --json --output report.json
+```
+
+Or with a config file (recommended for repeatable audits):
+
+```bash
+echo '{"h1":"h1","author":"meta[name=author]@content"}' > extractions.json
+seo-audit https://example.com --extract-file extractions.json --json
+```
+
+**Selector grammar** (suffix optional):
+
+| Suffix    | Returns                                       |
+|-----------|-----------------------------------------------|
+| *(none)*  | Trimmed text content                          |
+| `@attr`   | Attribute value (e.g. `meta[name=author]@content`) |
+| `#html`   | Inner HTML                                    |
+
+**Object form** unlocks `all` (multi-match → array) and `required` (emits a
+low-severity `EXTRACTION_MISSING_REQUIRED` issue if no match — integrates
+with `--fail-on low`):
+
+```json
+{
+  "h1": "h1",
+  "price": "[itemprop=price]@content",
+  "intro": "article > p:first-of-type#html",
+  "faqQuestions": { "selector": ".faq h3", "all": true },
+  "title": { "selector": "title", "required": true }
+}
+```
+
+Per-page values appear under `pages[].extracted` in the JSON report.
+A summary appears at `extractionSummary`. The HTML/text/PDF reports show
+match coverage and missing-required counts only — full per-page detail
+stays in JSON for downstream tools (jq, spreadsheets, CI gates).
 
 ```bash
 # Query Google's CrUX API for real-user Core Web Vitals (requires CRUX_API_KEY env var)
@@ -427,6 +475,20 @@ manageable. `rm -rf ~/.config/seo-audit/crawls/<host>/` if you ever want to
 reset.
 
 ## CHANGELOG
+
+### v0.7.0 — 2026-04-26
+
+- **Added:** custom extraction rules. Define CSS-selector-based field
+  extractions with `--extract '<json>'` or `--extract-file <path>`. Selector
+  grammar: `selector` (text), `selector@attr` (attribute), `selector#html`
+  (inner HTML). Object form supports `all: true` (multi-match) and
+  `required: true` (low-severity `EXTRACTION_MISSING_REQUIRED` issue,
+  integrates with `--fail-on`).
+- **Added:** `AnalyzeOptions.extract` for library consumers, plus
+  `PageReport.extracted` and `SiteReport.extractionSummary` in the JSON
+  report.
+- **Added:** "Custom extractions" summary section in HTML/text/PDF reports.
+  Full per-page detail remains in JSON.
 
 ### v0.6.0 — 2026-04-26
 
