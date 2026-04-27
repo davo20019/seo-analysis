@@ -1,0 +1,5 @@
+66.249.66.1 - - [25/Apr/2026:10:15:23 +0000] "GET /index.html HTTP/1.1" 200 1234 "-" "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+66.249.66.1 - - [25/Apr/2026:10:15:24 +0000] "GET /about HTTP/1.1" 404 512 "-" "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+40.77.167.10 - - [25/Apr/2026:10:16:00 +0000] "GET /pricing HTTP/1.1" 200 2048 "-" "Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)"
+192.0.2.99 - - [25/Apr/2026:10:17:01 +0000] "GET /robots.txt HTTP/1.1" 200 256 "-" "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+192.0.2.50 - - [25/Apr/2026:10:18:30 +0000] "POST /api/search HTTP/1.1" 200 512 "https://example.com/" "Mozilla/5.0"
