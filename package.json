@@ -1,6 +1,6 @@
 {
   "name": "@davo20019/seo-audit",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "type": "module",
   "description": "Crawl-based SEO audit CLI with JS rendering, JSON-LD validation, CrUX field data, sitemap walking, HTML/PDF reports, and crawl diffing.",
   "license": "MIT",

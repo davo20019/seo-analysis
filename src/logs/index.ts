@@ -111,8 +111,8 @@ export async function analyzeLogs(
     const recent = await recentCrawlsForUrl(site, 1);
     if (recent.length > 0) {
       crawl = await loadCrawl(recent[0].path);
-      const crawledAt = recent[0].timestamp;
-      const daysOld = Math.round((Date.now() - new Date(crawledAt).getTime()) / 86_400_000);
+      const crawledAt = unsanitizeIsoTimestamp(recent[0].timestamp);
+      const daysOld = Math.round((Date.now() - Date.parse(crawledAt)) / 86_400_000);
       baselineCrawl = { crawledAt, pages: crawl.pages.length, daysOld };
     }
   } catch {
@@ -187,6 +187,13 @@ async function openStream(input: LogInput): Promise<Readable> {
   if (input === "-") return process.stdin;
   if (typeof input === "string") return createReadStream(input);
   return input;
+}
+
+function unsanitizeIsoTimestamp(stamp: string): string {
+  // persist.ts writes filenames like "2026-04-27T01-02-07-897Z" with `:` and `.`
+  // both replaced by `-` for filesystem safety. Reverse the substitution so
+  // Date.parse can read it.
+  return stamp.replace(/T(\d\d)-(\d\d)-(\d\d)-(\d{3})Z$/, "T$1:$2:$3.$4Z");
 }
 
 function resolveLogEntryUrl(rawUrl: string, site: string): string {
