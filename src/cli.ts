@@ -78,6 +78,8 @@ function printHelp(): void {
 Subcommands:
   diff <url>                  Compare the two most recent persisted crawls for <url>
   diff <old.json> <new.json>  Compare two report JSON files explicitly
+  logs <path>                 Analyze a server/CDN access log. Use "-" for stdin.
+                              Required: --site <url>.
 
 Usage:
   npm run dev -- <url> [more-urls] [options]
@@ -1285,6 +1287,159 @@ function formatTextReport(report: SiteReport): string {
   return lines.join("\n");
 }
 
+async function runLogsSubcommand(argv: string[]): Promise<void> {
+  let path: string | null = null;
+  let site: string | null = null;
+  let format: "auto" | "combined" | "json" | "cloudflare" | "fastly" = "auto";
+  let verifyBots = true;
+  let since: string | undefined;
+  let until: string | undefined;
+  let asJson = false;
+  let outputPath: string | null = null;
+  let htmlReportPath: string | null = null;
+  let pdfReportPath: string | null = null;
+  let noProgress = false;
+  let failOnSeverity: "high" | "medium" | "low" | null = null;
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--site") { site = argv[++i] ?? null; continue; }
+    if (arg === "--format") {
+      const v = argv[++i] ?? "";
+      if (!["auto", "combined", "json", "cloudflare", "fastly"].includes(v)) {
+        throw new Error("--format must be one of auto|combined|json|cloudflare|fastly");
+      }
+      format = v as typeof format;
+      continue;
+    }
+    if (arg === "--no-verify-bots") { verifyBots = false; continue; }
+    if (arg === "--since") { since = argv[++i]; continue; }
+    if (arg === "--until") { until = argv[++i]; continue; }
+    if (arg === "--json") { asJson = true; continue; }
+    if (arg === "--output") { outputPath = argv[++i] ?? null; continue; }
+    if (arg === "--html-report") { htmlReportPath = argv[++i] ?? null; continue; }
+    if (arg === "--pdf-report") { pdfReportPath = argv[++i] ?? null; continue; }
+    if (arg === "--no-progress") { noProgress = true; continue; }
+    if (arg === "--fail-on") {
+      const v = argv[++i];
+      if (v !== "high" && v !== "medium" && v !== "low") {
+        throw new Error("--fail-on must be high|medium|low");
+      }
+      failOnSeverity = v;
+      continue;
+    }
+    if (!arg.startsWith("--") && path === null) { path = arg; continue; }
+    throw new Error(`Unknown logs argument: ${arg}`);
+  }
+  if (path === null) {
+    console.error("Usage: seo-audit logs <path|-> --site <url> [options]");
+    process.exit(1);
+  }
+  if (site === null) {
+    console.error("--site is required for `seo-audit logs`.");
+    process.exit(1);
+  }
+
+  const { analyzeLogs } = await import("./logs/index.js");
+  const report = await analyzeLogs(path, {
+    site,
+    format,
+    verifyBots,
+    ...(since !== undefined ? { since } : {}),
+    ...(until !== undefined ? { until } : {}),
+    ...(noProgress ? {} : { onProgress: () => { /* progress UI deferred */ } }),
+  });
+
+  const json = JSON.stringify(report, null, 2);
+  const text = formatLogAnalysisReport(report);
+
+  if (asJson) {
+    if (outputPath !== null) {
+      await writeFile(outputPath, json, "utf8");
+    } else {
+      process.stdout.write(json);
+      process.stdout.write("\n");
+    }
+    process.stderr.write(
+      `Log analysis: ${report.timeWindow.durationHours}h, ${totalBotHits(report)} bot hits, ` +
+      `${report.orphans.length} orphans, ${report.stalePriorities.length} stale priorities, ` +
+      `${report.statusMismatches.length} status mismatches.\n`
+    );
+  } else {
+    process.stdout.write(text);
+    process.stdout.write("\n");
+    if (outputPath !== null) await writeFile(outputPath, json, "utf8");
+  }
+
+  if (htmlReportPath !== null) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const reportMod = await import("./report.js") as any;
+    const html: string = reportMod.renderLogAnalysisReport(report);
+    await writeFile(htmlReportPath, html, "utf8");
+  }
+  if (pdfReportPath !== null) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const reportMod = await import("./report.js") as any;
+    const html: string = reportMod.renderLogAnalysisReport(report);
+    await reportMod.renderPdfReport(html, pdfReportPath);
+  }
+
+  if (failOnSeverity !== null) {
+    const failingSeverities =
+      failOnSeverity === "high" ? ["high"] :
+      failOnSeverity === "medium" ? ["high", "medium"] :
+      ["high", "medium", "low"];
+    const triggered = report.issues.some((i) => failingSeverities.includes(i.severity));
+    if (triggered) process.exit(2);
+  }
+}
+
+function totalBotHits(r: import("./types.js").LogAnalysisReport): number {
+  return r.bots.reduce((sum, b) => sum + b.hits, 0);
+}
+
+function formatLogAnalysisReport(r: import("./types.js").LogAnalysisReport): string {
+  const lines: string[] = [];
+  lines.push(`Log analysis: ${r.source} (format=${r.format})`);
+  if (r.timeWindow.earliest !== "") {
+    lines.push(`Log window:      ${r.timeWindow.earliest} → ${r.timeWindow.latest}  (${r.timeWindow.durationHours}h)`);
+  }
+  if (r.baselineCrawl !== null) {
+    lines.push(`Crawl baseline:  ${r.baselineCrawl.crawledAt}  (${r.baselineCrawl.daysOld} days old, ${r.baselineCrawl.pages} pages)`);
+  } else {
+    lines.push("Crawl baseline:  none — Layer B disabled. Run `seo-audit <site>` to enable joined findings.");
+  }
+  lines.push(`Total lines:     ${r.totalLines} (parse errors: ${r.parseErrors})`);
+  lines.push(`Spoofed hits:    ${r.spoofedHits}`);
+  lines.push(`Unverified hits: ${r.unverifiedBotHits}`);
+  lines.push("");
+  lines.push("Bots:");
+  if (r.bots.length === 0) lines.push("  (none)");
+  for (const b of r.bots) {
+    lines.push(`  ${b.name.padEnd(16)} hits=${b.hits} urls=${b.uniqueUrls} ips=${b.uniqueIps}`);
+  }
+  if (r.orphans.length > 0) {
+    lines.push("", `Orphan pages (${r.orphans.length}):`);
+    for (const o of r.orphans.slice(0, 20)) lines.push(`  ${o.url}  hits=${o.hits}`);
+    if (r.orphans.length > 20) lines.push(`  … and ${r.orphans.length - 20} more`);
+  }
+  if (r.stalePriorities.length > 0) {
+    lines.push("", `Stale priority pages (${r.stalePriorities.length}):`);
+    for (const s of r.stalePriorities) {
+      const days = s.daysSinceLastCrawl === null ? "never" : `${s.daysSinceLastCrawl}d`;
+      lines.push(`  ${s.url}  rank=${s.pageRank.toFixed(4)}  last=${days}`);
+    }
+  }
+  if (r.statusMismatches.length > 0) {
+    lines.push("", `Status mismatches (${r.statusMismatches.length}):`);
+    for (const m of r.statusMismatches.slice(0, 20)) {
+      lines.push(`  ${m.url}  crawl=${m.crawlStatus}  worstLog=${m.worstStatus}  hits=${m.hits}`);
+    }
+    if (r.statusMismatches.length > 20) lines.push(`  … and ${r.statusMismatches.length - 20} more`);
+  }
+  return lines.join("\n");
+}
+
 async function maybeWriteOutput(outputPath: string | null, contents: string): Promise<void> {
   if (!outputPath) {
     return;
@@ -1295,6 +1450,11 @@ async function maybeWriteOutput(outputPath: string | null, contents: string): Pr
 
 async function main(): Promise<void> {
   try {
+    if (process.argv[2] === "logs") {
+      await runLogsSubcommand(process.argv.slice(3));
+      return;
+    }
+
     const options = parseArgs(process.argv.slice(2));
 
     if (options.gscSetup) {
