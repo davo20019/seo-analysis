@@ -47,3 +47,52 @@ function containsTopLevel(s: string, ch: "@" | "#"): boolean {
   }
   return false;
 }
+
+const FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+
+export function parseExtractionRules(input: unknown): Record<string, ExtractionRule> {
+  if (input === null || input === undefined) return {};
+
+  if (typeof input === "string") {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(input);
+    } catch (err) {
+      throw new Error(`Invalid extraction JSON: ${(err as Error).message}`);
+    }
+    return parseExtractionRules(parsed);
+  }
+
+  if (typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("Extraction rules must be a JSON object of { name: rule }");
+  }
+
+  const out: Record<string, ExtractionRule> = {};
+  for (const [name, value] of Object.entries(input as Record<string, unknown>)) {
+    if (!FIELD_NAME.test(name)) {
+      throw new Error(
+        `Invalid extraction field name "${name}" — must match /^[A-Za-z_][A-Za-z0-9_-]*$/`
+      );
+    }
+    out[name] = normalizeRule(name, value);
+  }
+  return out;
+}
+
+function normalizeRule(name: string, value: unknown): ExtractionRule {
+  if (typeof value === "string") {
+    return parseSelectorGrammar(value);
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`Extraction rule "${name}" must be a string or object`);
+  }
+  const obj = value as Record<string, unknown>;
+  if (typeof obj.selector !== "string") {
+    throw new Error(`Extraction rule "${name}" missing string "selector"`);
+  }
+  const grammar = parseSelectorGrammar(obj.selector);
+  const rule: ExtractionRule = { ...grammar };
+  if (obj.all !== undefined) rule.all = Boolean(obj.all);
+  if (obj.required !== undefined) rule.required = Boolean(obj.required);
+  return rule;
+}
