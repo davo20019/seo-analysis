@@ -211,6 +211,42 @@ A summary appears at `extractionSummary`. The HTML/text/PDF reports show
 match coverage and missing-required counts only — full per-page detail
 stays in JSON for downstream tools (jq, spreadsheets, CI gates).
 
+### Log-file analysis (`seo-audit logs`)
+
+Parse a web-server / CDN access log, verify bot identities via reverse-DNS,
+and join the results against the most recent persisted crawl. No server
+access required — point the tool at a log file or pipe one in.
+
+```bash
+# Local file
+seo-audit logs ./access.log --site https://example.com
+
+# Stdin
+zcat cloudflare-logs-*.gz | seo-audit logs - --site https://example.com --format cloudflare
+
+# JSON output for downstream agents / scripts
+seo-audit logs ./access.log --site https://example.com --json --output logs.json
+```
+
+**Findings (when a persisted crawl exists for the host):**
+
+- **Orphan pages** — bot-visited URLs not in your internal link graph.
+- **Stale priorities** — top-PageRank URLs that bots haven't crawled in 30+ days.
+- **Status mismatches** — pages your audit recorded as 200 that bots saw return 4xx/5xx.
+
+**Supported formats:** Apache/Nginx Combined Log Format, generic JSON
+(one object per line), Cloudflare Logpush JSON, Fastly Real-Time JSON.
+Auto-detected; override with `--format`.
+
+**Bot verification** is on by default and uses reverse-DNS → forward-DNS
+suffix matching with an in-memory cache. Disable with `--no-verify-bots`.
+In sandboxed/air-gapped environments without DNS, the tool emits a
+`LOG_DNS_UNAVAILABLE` issue and continues with all hits flagged as
+unverified instead of stalling.
+
+**Privacy:** no raw IPs are written to any output; the DNS cache is
+in-memory only; no telemetry.
+
 ```bash
 # Query Google's CrUX API for real-user Core Web Vitals (requires CRUX_API_KEY env var)
 CRUX_API_KEY=your-google-api-key npm run dev -- https://example.com --crux --max-pages 5
@@ -475,6 +511,24 @@ manageable. `rm -rf ~/.config/seo-audit/crawls/<host>/` if you ever want to
 reset.
 
 ## CHANGELOG
+
+### v0.8.0 — 2026-04-27
+
+- **Added:** `seo-audit logs <path>` subcommand. Parses Apache/Nginx
+  Combined Log Format, generic JSON, Cloudflare Logpush, and Fastly
+  Real-Time logs. Verifies Googlebot/Bingbot/Applebot/DuckDuckBot/AI
+  bots via reverse-DNS with in-memory caching. Auto-falls-back to
+  unverified mode when DNS is unavailable.
+- **Added:** Joined-to-crawl findings — orphan pages
+  (`LOG_ORPHAN_PAGE`), stale priorities (`LOG_STALE_PRIORITY_PAGE`),
+  status mismatches (`LOG_STATUS_MISMATCH`). All low severity,
+  integrate with `--fail-on`.
+- **Added:** `analyzeLogs(input, options)` library API accepting a
+  path or `Readable` stream. `LogAnalysisReport` shape stable from v0.8.
+- **Added:** Structured `LogAnalysisProgressEvent` callback for
+  long-running log analyses.
+- **Privacy:** no raw IPs in any output, DNS cache in-memory only,
+  no telemetry.
 
 ### v0.7.0 — 2026-04-26
 
