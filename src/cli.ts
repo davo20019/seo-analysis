@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 
 import { analyzeSite } from "./analyzer.js";
+import { parseExtractionRules } from "./extract.js";
 import { persistCrawl, loadCrawl, recentCrawlsForUrl } from "./persist.js";
 import { evaluateFailOn } from "./diff.js";
 import { scanDirectory } from "./directory-scanner.js";
@@ -10,6 +11,7 @@ import type {
   AnalyzeProgressStage,
   ContentDedupReport,
   DuplicateGroup,
+  ExtractionRule,
   Ga4EnrichmentReport,
   GscEnrichmentReport,
   KeywordSummary,
@@ -34,6 +36,8 @@ interface CliOptions {
   ga4Days: number | null;
   ga4ServiceAccountKeyFile: string | null;
   excludePathPatterns: string[];
+  extract: string | null;
+  extractFile: string | null;
   fullSitemap: boolean;
   htmlReportPath: string | null;
   includePathPatterns: string[];
@@ -107,6 +111,8 @@ Options:
   --extract-terms           Extract and rank the most frequent terms on the site
   --top-terms <n>           Number of top terms to report. Default: 20
   --from-directory <path>   Search local HTML files instead of crawling
+  --extract <json>          Inline JSON of extraction rules (mutually exclusive with --extract-file)
+  --extract-file <path>     JSON file of extraction rules
   --json                     Print raw JSON instead of a text report
   --output <file>            Write the final report to a file
   --no-progress              Disable the interactive stderr crawl progress line
@@ -192,6 +198,8 @@ function parseArgs(argv: string[]): CliOptions {
     ga4Days: null,
     ga4ServiceAccountKeyFile: null,
     excludePathPatterns: [],
+    extract: null,
+    extractFile: null,
     fullSitemap: false,
     htmlReportPath: null,
     includePathPatterns: [],
@@ -628,6 +636,28 @@ function parseArgs(argv: string[]): CliOptions {
 
     if (arg.startsWith("--from-directory=")) {
       options.fromDirectory = arg.split("=").slice(1).join("=");
+      continue;
+    }
+
+    if (arg === "--extract") {
+      options.extract = requireValue(argv, index, "--extract");
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--extract=")) {
+      options.extract = arg.split("=").slice(1).join("=");
+      continue;
+    }
+
+    if (arg === "--extract-file") {
+      options.extractFile = requireValue(argv, index, "--extract-file");
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--extract-file=")) {
+      options.extractFile = arg.split("=").slice(1).join("=");
       continue;
     }
 
@@ -1301,6 +1331,28 @@ async function main(): Promise<void> {
     const keywords = await loadKeywords(options.keywords, options.keywordFile);
     const reports: SiteReport[] = [];
 
+    let extractRules: Record<string, ExtractionRule> | undefined;
+    if (options.extract !== null && options.extractFile !== null) {
+      console.error("Use --extract or --extract-file, not both.");
+      process.exit(1);
+    }
+    if (options.extractFile !== null) {
+      try {
+        const contents = await readFile(options.extractFile, "utf8");
+        extractRules = parseExtractionRules(contents);
+      } catch (err) {
+        console.error(`Failed to load --extract-file: ${(err as Error).message}`);
+        process.exit(1);
+      }
+    } else if (options.extract !== null) {
+      try {
+        extractRules = parseExtractionRules(options.extract);
+      } catch (err) {
+        console.error(`Failed to parse --extract: ${(err as Error).message}`);
+        process.exit(1);
+      }
+    }
+
     if (options.fromDirectory) {
       const report = await scanDirectory(options.fromDirectory, {
         keywords,
@@ -1336,6 +1388,7 @@ async function main(): Promise<void> {
             ...mapToGa4Creds(resolveGoogleCredentialOptions(options.ga4ServiceAccountKeyFile)),
             contentDedup: !options.noContentDedup,
             linkGraph: !options.noLinkGraph,
+            ...(extractRules ? { extract: extractRules } : {}),
             render: options.render,
             ...(options.renderTimeoutMs ? { renderTimeoutMs: options.renderTimeoutMs } : {}),
             retries: options.retries,
