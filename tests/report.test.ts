@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { renderHtmlReport, escapeHtml, renderPdfReport } from "../src/report.js";
 import type { SiteReport } from "../src/types.js";
+import type { ExtractionSummary } from "../src/types.js";
 
 const minimalReport: SiteReport = {
   startUrl: "https://example.com/",
@@ -250,5 +251,36 @@ describe("renderHtmlReport with GA4", () => {
     expect(html).toContain("properties/123");
     expect(html).toContain("<th>GA4</th>");
     expect(html).toContain("10 sess");
+  });
+});
+
+describe("renderHtmlReport with extractionSummary", () => {
+  const summary: ExtractionSummary = {
+    rules: ["h1", "title"],
+    pagesEvaluated: 2,
+    matchCounts: { h1: 1, title: 2 },
+    missingRequiredCounts: { h1: 1, title: 0 },
+    pagesWithMissingRequired: 1
+  };
+
+  it("renders the Custom extractions section", () => {
+    const report: SiteReport = { ...minimalReport, extractionSummary: summary };
+    const html = renderHtmlReport(report);
+    expect(html).toContain("<h2>Custom extractions</h2>");
+    expect(html).toContain("Pages with missing required fields:");
+    expect(html).toContain("<code>h1</code>");
+  });
+
+  it("omits the section when summary is absent", () => {
+    const html = renderHtmlReport(minimalReport);
+    expect(html).not.toContain("Custom extractions");
+  });
+
+  it("hides the missing-required block when zero", () => {
+    const clean: ExtractionSummary = { ...summary, missingRequiredCounts: { h1: 0, title: 0 }, pagesWithMissingRequired: 0 };
+    const report: SiteReport = { ...minimalReport, extractionSummary: clean };
+    const html = renderHtmlReport(report);
+    expect(html).toContain("<h2>Custom extractions</h2>");
+    expect(html).toContain("No pages with missing required fields.");
   });
 });

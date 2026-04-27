@@ -12,6 +12,7 @@ import type {
   ContentDedupReport,
   DuplicateGroup,
   ExtractionRule,
+  ExtractionSummary,
   Ga4EnrichmentReport,
   GscEnrichmentReport,
   KeywordSummary,
@@ -1053,6 +1054,26 @@ function formatLinkGraph(r: LinkGraphReport): string[] {
   return lines;
 }
 
+function formatExtractions(s: ExtractionSummary): string[] {
+  if (s.rules.length === 0) return [];
+  const lines: string[] = ["", "Custom extractions:"];
+  lines.push(`  Rules: ${s.rules.join(", ")} (${s.rules.length})`);
+  lines.push("  Match coverage:");
+  for (const name of s.rules) {
+    const matched = s.matchCounts[name] ?? 0;
+    const pct = s.pagesEvaluated === 0 ? 0 : Math.round((matched / s.pagesEvaluated) * 100);
+    lines.push(`    ${name.padEnd(20)} ${pct}% (${matched}/${s.pagesEvaluated})`);
+  }
+  if (s.pagesWithMissingRequired > 0) {
+    lines.push(`  Pages with missing required fields: ${s.pagesWithMissingRequired}`);
+    for (const name of s.rules) {
+      const m = s.missingRequiredCounts[name] ?? 0;
+      if (m > 0) lines.push(`    ${name}: ${m}`);
+    }
+  }
+  return lines;
+}
+
 function formatPriorityIssues(entries: PrioritySummaryEntry[]): string[] {
   if (entries.length === 0) return [];
   const lines = ["", "Priority issues (high/medium severity on pages with traffic):"];
@@ -1247,6 +1268,7 @@ function formatTextReport(report: SiteReport): string {
 
   if (report.contentDedup) lines.push(...formatContentDedup(report.contentDedup));
   if (report.linkGraph)    lines.push(...formatLinkGraph(report.linkGraph));
+  if (report.extractionSummary) lines.push(...formatExtractions(report.extractionSummary));
 
   if (report.summary.priorityIssues && report.summary.priorityIssues.length > 0) {
     lines.push(...formatPriorityIssues(report.summary.priorityIssues));

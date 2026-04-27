@@ -1,13 +1,14 @@
 import type {
   AgentReadinessReport,
+  ContentDedupReport,
+  ExtractionSummary,
   GscEnrichmentReport,
   Ga4EnrichmentReport,
-  PrioritySummaryEntry,
-  SiteReport,
   Issue,
-  Severity,
-  ContentDedupReport,
   LinkGraphReport,
+  PrioritySummaryEntry,
+  Severity,
+  SiteReport,
 } from "./types.js";
 import { chromium } from "playwright";
 
@@ -91,6 +92,7 @@ ${report.gsc ? `\n<h2>Search Console</h2>\n${renderGscSection(report.gsc)}` : ""
 ${report.ga4 ? `\n<h2>Analytics</h2>\n${renderGa4Section(report.ga4)}` : ""}
 ${report.contentDedup ? `\n<h2>Content duplicates</h2>\n${renderContentDedupSection(report.contentDedup)}` : ""}
 ${report.linkGraph ? `\n<h2>Internal link equity</h2>\n${renderLinkGraphSection(report.linkGraph)}` : ""}
+${report.extractionSummary ? `\n<h2>Custom extractions</h2>\n${renderExtractionsSection(report.extractionSummary)}` : ""}
 ${(report.gsc || report.ga4) && report.summary.priorityIssues && report.summary.priorityIssues.length > 0
   ? `\n<h2>Priority issues</h2>\n${renderPriorityIssues(report.summary.priorityIssues)}`
   : ""}
@@ -155,6 +157,35 @@ function renderLinkGraphSection(r: LinkGraphReport): string {
 <table><thead><tr><th>URL</th><th>PageRank</th><th>Words</th><th>Incoming</th></tr></thead><tbody>${r.underLinkedImportantPages.map(renderRow).join("")}</tbody></table>`;
 
   return `${summary}\n${topTable}\n${underTable}`;
+}
+
+function renderExtractionsSection(s: ExtractionSummary): string {
+  if (s.rules.length === 0) return "";
+  const coverageRows = s.rules
+    .map((name) => {
+      const matched = s.matchCounts[name] ?? 0;
+      const pct = s.pagesEvaluated === 0 ? 0 : Math.round((matched / s.pagesEvaluated) * 100);
+      return `<tr><td><code>${escapeHtml(name)}</code></td><td>${pct}% (${matched}/${s.pagesEvaluated})</td></tr>`;
+    })
+    .join("\n");
+  const missingRows = s.rules
+    .filter((name) => (s.missingRequiredCounts[name] ?? 0) > 0)
+    .map((name) => `<li><code>${escapeHtml(name)}</code>: ${s.missingRequiredCounts[name]}</li>`)
+    .join("\n");
+  return `
+<p>Rules: ${s.rules.map((n) => `<code>${escapeHtml(n)}</code>`).join(", ")} (${s.rules.length})</p>
+<table>
+<thead><tr><th>Rule</th><th>Match coverage</th></tr></thead>
+<tbody>
+${coverageRows}
+</tbody>
+</table>
+${
+  s.pagesWithMissingRequired > 0
+    ? `<p>Pages with missing required fields: <strong>${s.pagesWithMissingRequired}</strong></p>\n<ul>\n${missingRows}\n</ul>`
+    : `<p>No pages with missing required fields.</p>`
+}
+`.trim();
 }
 
 function renderPriorityIssues(entries: PrioritySummaryEntry[]): string {
