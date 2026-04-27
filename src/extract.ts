@@ -1,4 +1,5 @@
-import type { ExtractionRule } from "./types.js";
+import type { load as cheerioLoad } from "cheerio";
+import type { ExtractionRule, ExtractionResult } from "./types.js";
 
 export function parseSelectorGrammar(input: string): ExtractionRule {
   let depth = 0;
@@ -95,4 +96,75 @@ function normalizeRule(name: string, value: unknown): ExtractionRule {
   if (obj.all !== undefined) rule.all = Boolean(obj.all);
   if (obj.required !== undefined) rule.required = Boolean(obj.required);
   return rule;
+}
+
+type CheerioRoot = ReturnType<typeof cheerioLoad>;
+
+const failedRulesLogged = new Set<string>();
+
+export function runExtractions(
+  $: CheerioRoot,
+  rules: Record<string, ExtractionRule>
+): { result: ExtractionResult; missingRequired: string[] } {
+  const result: ExtractionResult = {};
+  const missingRequired: string[] = [];
+
+  for (const [name, rule] of Object.entries(rules)) {
+    let value: string | string[] | null;
+    try {
+      value = evaluateRule($, rule);
+    } catch (err) {
+      if (!failedRulesLogged.has(name)) {
+        failedRulesLogged.add(name);
+        process.stderr.write(
+          `Extraction rule "${name}" failed: ${(err as Error).message}\n`
+        );
+      }
+      value = rule.all ? [] : null;
+    }
+    result[name] = value;
+    if (rule.required && isMissing(value)) {
+      missingRequired.push(name);
+    }
+  }
+  return { result, missingRequired };
+}
+
+function evaluateRule(
+  $: CheerioRoot,
+  rule: ExtractionRule
+): string | string[] | null {
+  const matched = $(rule.selector);
+  if (rule.all) {
+    const out: string[] = [];
+    matched.each((_, el) => {
+      const v = readNode($(el), rule);
+      if (v !== null) out.push(v);
+    });
+    return out;
+  }
+  if (matched.length === 0) return null;
+  return readNode(matched.first(), rule);
+}
+
+function readNode(
+  node: ReturnType<CheerioRoot>,
+  rule: ExtractionRule
+): string | null {
+  if (rule.attr) {
+    const v = node.attr(rule.attr);
+    return v === undefined ? null : v;
+  }
+  if (rule.html) {
+    const v = node.html();
+    return v === null ? null : v;
+  }
+  const text = node.text().replace(/\s+/g, " ").trim();
+  return text === "" ? null : text;
+}
+
+function isMissing(value: string | string[] | null): boolean {
+  if (value === null) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  return false;
 }

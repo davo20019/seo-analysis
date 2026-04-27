@@ -121,3 +121,100 @@ describe("parseExtractionRules", () => {
     expect(() => parseExtractionRules({ x: null })).toThrow(/must be a string or object/);
   });
 });
+
+import { load } from "cheerio";
+import { runExtractions } from "../src/extract.js";
+
+const FIXTURE = `
+<html>
+  <head>
+    <title>Sample page</title>
+    <meta name="author" content="Jane Doe" />
+  </head>
+  <body>
+    <h1>Headline</h1>
+    <article>
+      <p>First paragraph with <em>emphasis</em>.</p>
+      <p>Second.</p>
+    </article>
+    <ul class="faq"><li><h3>Q1</h3></li><li><h3>Q2</h3></li></ul>
+    <span itemprop="price" content="19.99">$19.99</span>
+  </body>
+</html>
+`;
+
+describe("runExtractions", () => {
+  const $ = load(FIXTURE);
+
+  it("returns text for plain selector", () => {
+    const rules = parseExtractionRules({ h1: "h1" });
+    expect(runExtractions($, rules).result).toEqual({ h1: "Headline" });
+  });
+
+  it("returns attribute value for @attr", () => {
+    const rules = parseExtractionRules({
+      author: "meta[name=author]@content",
+      price: "[itemprop=price]@content"
+    });
+    expect(runExtractions($, rules).result).toEqual({
+      author: "Jane Doe",
+      price: "19.99"
+    });
+  });
+
+  it("returns inner HTML for #html", () => {
+    const rules = parseExtractionRules({
+      intro: "article > p:first-of-type#html"
+    });
+    expect(runExtractions($, rules).result.intro).toBe("First paragraph with <em>emphasis</em>.");
+  });
+
+  it("returns null when no element matches", () => {
+    const rules = parseExtractionRules({ missing: ".nope" });
+    expect(runExtractions($, rules).result).toEqual({ missing: null });
+  });
+
+  it("returns null when attribute is absent on the matched element", () => {
+    const rules = parseExtractionRules({ alt: "h1@alt" });
+    expect(runExtractions($, rules).result).toEqual({ alt: null });
+  });
+
+  it("returns array for all: true", () => {
+    const rules = parseExtractionRules({
+      faq: { selector: ".faq h3", all: true }
+    });
+    expect(runExtractions($, rules).result).toEqual({ faq: ["Q1", "Q2"] });
+  });
+
+  it("returns empty array for all: true with no matches", () => {
+    const rules = parseExtractionRules({
+      none: { selector: ".nope", all: true }
+    });
+    expect(runExtractions($, rules).result).toEqual({ none: [] });
+  });
+
+  it("flags required + missing", () => {
+    const rules = parseExtractionRules({
+      title: { selector: "title", required: true },
+      missing: { selector: ".nope", required: true }
+    });
+    const out = runExtractions($, rules);
+    expect(out.result.title).toBe("Sample page");
+    expect(out.result.missing).toBeNull();
+    expect(out.missingRequired).toEqual(["missing"]);
+  });
+
+  it("flags required + all: true with empty array", () => {
+    const rules = parseExtractionRules({
+      faqs: { selector: ".nope", all: true, required: true }
+    });
+    const out = runExtractions($, rules);
+    expect(out.result.faqs).toEqual([]);
+    expect(out.missingRequired).toEqual(["faqs"]);
+  });
+
+  it("does not flag non-required missing", () => {
+    const rules = parseExtractionRules({ x: ".nope" });
+    expect(runExtractions($, rules).missingRequired).toEqual([]);
+  });
+});
