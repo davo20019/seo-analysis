@@ -100,11 +100,10 @@ function normalizeRule(name: string, value: unknown): ExtractionRule {
 
 type CheerioRoot = ReturnType<typeof cheerioLoad>;
 
-const failedRulesLogged = new Set<string>();
-
 export function runExtractions(
   $: CheerioRoot,
-  rules: Record<string, ExtractionRule>
+  rules: Record<string, ExtractionRule>,
+  failedRulesLogged: Set<string> = new Set()
 ): { result: ExtractionResult; missingRequired: string[] } {
   const result: ExtractionResult = {};
   const missingRequired: string[] = [];

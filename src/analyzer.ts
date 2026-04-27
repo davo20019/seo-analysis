@@ -1147,11 +1147,12 @@ function analyzeHtml(
   allowedHosts: Set<string>,
   robotsRules: RobotsRules,
   userAgent: string,
-  extractionRules: Record<string, ExtractionRule> = {}
+  extractionRules: Record<string, ExtractionRule> = {},
+  extractionFailedRules: Set<string> = new Set()
 ): PageReport {
   const $ = load(html);
   const extracted = Object.keys(extractionRules).length > 0
-    ? runExtractions($, extractionRules)
+    ? runExtractions($, extractionRules, extractionFailedRules)
     : null;
   const issues: Issue[] = [];
   const finalUrl = normalizeUrl(response.finalUrl);
@@ -1715,7 +1716,8 @@ async function analyzePage(
   options: FetchOptions,
   robotsRules: RobotsRules = {},
   renderBrowser: import("playwright").Browser | null = null,
-  extractionRules: Record<string, ExtractionRule> = {}
+  extractionRules: Record<string, ExtractionRule> = {},
+  extractionFailedRules: Set<string> = new Set()
 ): Promise<PageReport> {
   try {
     let response: FetchResult;
@@ -1779,7 +1781,7 @@ async function analyzePage(
       };
     }
 
-    return analyzeHtml(url, response, response.text, allowedHosts, robotsRules, options.userAgent, extractionRules);
+    return analyzeHtml(url, response, response.text, allowedHosts, robotsRules, options.userAgent, extractionRules, extractionFailedRules);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown fetch error";
 
@@ -2486,6 +2488,7 @@ export async function analyzeSite(
   const extractionRules = parseExtractionRules(rawOptions.extract);
   const extractionRulesEntries = Object.entries(extractionRules);
   const hasExtractions = extractionRulesEntries.length > 0;
+  const extractionFailedRules = new Set<string>();
 
   if (rawOptions.render) {
     const { launchRenderBrowser } = await import("./render.js");
@@ -2573,7 +2576,7 @@ export async function analyzeSite(
   );
   emitProgress({ phase: "crawl-start", url: normalizedStartUrl });
   emitProgress({ phase: "page-start", url: normalizedStartUrl, activePages: 1 });
-  const startPage = await analyzePage(normalizedStartUrl, allowedHosts, fetchOptions, {}, renderBrowser, extractionRules);
+  const startPage = await analyzePage(normalizedStartUrl, allowedHosts, fetchOptions, {}, renderBrowser, extractionRules, extractionFailedRules);
   visitedRequestedUrls.add(normalizedStartUrl);
   visitedRequestedUrls.add(startPage.finalUrl);
 
@@ -2690,7 +2693,7 @@ export async function analyzeSite(
     }
 
     const batchPages = await Promise.all(
-      batchUrls.map((url) => analyzePage(url, allowedHosts, fetchOptions, robotsRules, renderBrowser, extractionRules))
+      batchUrls.map((url) => analyzePage(url, allowedHosts, fetchOptions, robotsRules, renderBrowser, extractionRules, extractionFailedRules))
     );
 
     let activePages = batchPages.length;
