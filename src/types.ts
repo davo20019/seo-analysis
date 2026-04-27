@@ -370,6 +370,96 @@ export interface ExtractionSummary {
   pagesWithMissingRequired: number;
 }
 
+export interface LogTimeWindow {
+  earliest: string;
+  latest: string;
+  durationHours: number;
+}
+
+export interface VerifiedBot {
+  name:
+    | "googlebot"
+    | "bingbot"
+    | "applebot"
+    | "duckduckbot"
+    | "claudebot"
+    | "gptbot"
+    | "perplexitybot"
+    | "other";
+  hits: number;
+  uniqueUrls: number;
+  uniqueIps: number;
+}
+
+export interface OrphanFinding {
+  url: string;
+  hits: number;
+  bots: string[];
+  firstSeen: string;
+  lastSeen: string;
+}
+
+export interface StaleFinding {
+  url: string;
+  pageRank: number;
+  daysSinceLastCrawl: number | null;
+  hitsInWindow: number;
+}
+
+export interface StatusMismatchFinding {
+  url: string;
+  crawlStatus: number;
+  logStatuses: Record<number, number>;
+  worstStatus: number;
+  hits: number;
+}
+
+export interface LogAnalysisBaseline {
+  crawledAt: string;
+  pages: number;
+  daysOld: number;
+}
+
+export interface LogAnalysisReport {
+  source: string;
+  format: string;
+  totalLines: number;
+  parseErrors: number;
+  timeWindow: LogTimeWindow;
+  bots: VerifiedBot[];
+  spoofedHits: number;
+  unverifiedBotHits: number;
+  baselineCrawl: LogAnalysisBaseline | null;
+  orphans: OrphanFinding[];
+  stalePriorities: StaleFinding[];
+  statusMismatches: StatusMismatchFinding[];
+  issues: Issue[];
+}
+
+export type LogAnalysisProgressEvent =
+  | { phase: "parse-start"; format: string }
+  | { phase: "parse-progress"; linesRead: number; bytesRead: number }
+  | { phase: "verify-start"; uniqueBotIps: number }
+  | { phase: "verify-progress"; verified: number; total: number }
+  | { phase: "join-start" }
+  | { phase: "complete" };
+
+export interface DnsResolver {
+  reverse: (ip: string) => Promise<string[]>;
+  resolve4: (host: string) => Promise<string[]>;
+  resolve6: (host: string) => Promise<string[]>;
+}
+
+export interface AnalyzeLogsOptions {
+  site: string;
+  format?: "auto" | "combined" | "json" | "cloudflare" | "fastly";
+  verifyBots?: boolean;
+  since?: string;
+  until?: string;
+  onProgress?: (event: LogAnalysisProgressEvent) => void;
+  dnsResolver?: DnsResolver;
+}
+
 export type AnalyzeProgressPhase =
   | "crawl-start"
   | "page-start"
