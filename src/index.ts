@@ -1,4 +1,5 @@
 export { analyzeSite } from "./analyzer.js";
+export { analyzeLogs } from "./logs/index.js";
 export { scanDirectory } from "./directory-scanner.js";
 export type { DirectoryScanOptions } from "./directory-scanner.js";
 export {
@@ -9,6 +10,7 @@ export {
 } from "./keywords.js";
 export type { PageTextContent } from "./keywords.js";
 export type {
+  AnalyzeLogsOptions,
   AnalyzeOptions,
   AnalyzeProgressEvent,
   AnalyzeProgressPhase,
@@ -16,6 +18,7 @@ export type {
   ContentCluster,
   ContentClusterMember,
   ContentDedupReport,
+  DnsResolver,
   DuplicateGroup,
   ExtractionResult,
   ExtractionRule,
@@ -31,10 +34,18 @@ export type {
   LinkGraphPage,
   LinkGraphReport,
   LinkGraphTopEntry,
+  LogAnalysisBaseline,
+  LogAnalysisProgressEvent,
+  LogAnalysisReport,
+  LogTimeWindow,
+  OrphanFinding,
   PageChecks,
   PageReport,
   Severity,
   SiteReport,
   SiteSummary,
+  StaleFinding,
+  StatusMismatchFinding,
   TermFrequency,
+  VerifiedBot,
 } from "./types.js";
