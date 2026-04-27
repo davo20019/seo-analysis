@@ -93,7 +93,8 @@ export async function analyzeLogs(
       bot = claimed;
       unverifiedBotHits += 1;
     }
-    aggregator.add({ ...entry, bot, verified });
+    const resolvedUrl = resolveLogEntryUrl(entry.url, site);
+    aggregator.add({ ...entry, url: resolvedUrl, bot, verified });
 
     if (totalLines - lastReport >= 5_000) {
       lastReport = totalLines;
@@ -186,6 +187,17 @@ async function openStream(input: LogInput): Promise<Readable> {
   if (input === "-") return process.stdin;
   if (typeof input === "string") return createReadStream(input);
   return input;
+}
+
+function resolveLogEntryUrl(rawUrl: string, site: string): string {
+  // Log entries from Combined Log Format / Cloudflare / Fastly are usually paths
+  // (e.g., "/index.html"). Crawls store full URLs. Normalize to full URLs against
+  // the --site option so the join in findOrphans / findStatusMismatches works.
+  try {
+    return new URL(rawUrl, site).toString();
+  } catch {
+    return rawUrl;
+  }
 }
 
 async function detectFormatFromStream(input: Readable): Promise<{ stream: Readable; format: LogFormat }> {
