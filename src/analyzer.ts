@@ -31,6 +31,7 @@ import {
 } from "./checks/agent-readiness-checks.js";
 import { buildContentDedupReport } from "./checks/content-dedup.js";
 import { buildLinkGraphReport } from "./checks/link-graph.js";
+import { parseExtractionRules, runExtractions, summarizeExtractions } from "./extract.js";
 import { applyEnrichment } from "./enrichment/index.js";
 import { GscEnrichmentSource } from "./enrichment/gsc.js";
 import { Ga4EnrichmentSource } from "./enrichment/ga4.js";
@@ -47,6 +48,7 @@ import type {
   AnalyzeProgressEvent,
   AnalyzeOptions,
   DuplicateGroup,
+  ExtractionRule,
   HreflangAlternate,
   InfrastructureReport,
   Issue,
@@ -1145,8 +1147,12 @@ function analyzeHtml(
   allowedHosts: Set<string>,
   robotsRules: RobotsRules,
   userAgent: string,
+  extractionRules: Record<string, ExtractionRule> = {}
 ): PageReport {
   const $ = load(html);
+  const extracted = Object.keys(extractionRules).length > 0
+    ? runExtractions($, extractionRules)
+    : null;
   const issues: Issue[] = [];
   const finalUrl = normalizeUrl(response.finalUrl);
   const effectiveHosts = new Set(allowedHosts);
@@ -1655,6 +1661,18 @@ function analyzeHtml(
   for (const issue of checkUrlAgainstRobots(response.finalUrl, userAgent, robotsRules)) pushIssue(issues, issue);
   for (const issue of checkJsonLdValidation(ldScripts)) pushIssue(issues, issue);
 
+  if (extracted) {
+    for (const name of extracted.missingRequired) {
+      const rule = extractionRules[name];
+      pushIssue(issues, {
+        code: "EXTRACTION_MISSING_REQUIRED",
+        severity: "low",
+        message: `Required extraction "${name}" returned no match for selector "${rule.selector}"`,
+        recommendation: `Confirm the selector is correct or remove "required" from the rule "${name}".`
+      });
+    }
+  }
+
   return {
     url: normalizeUrl(requestedUrl),
     finalUrl,
@@ -1686,7 +1704,8 @@ function analyzeHtml(
       bodyText: bodyText || null
     },
     issues,
-    discoveredLinks: [...discoveredLinks]
+    discoveredLinks: [...discoveredLinks],
+    ...(extracted ? { extracted: extracted.result } : {}),
   };
 }
 
@@ -1696,6 +1715,7 @@ async function analyzePage(
   options: FetchOptions,
   robotsRules: RobotsRules = {},
   renderBrowser: import("playwright").Browser | null = null,
+  extractionRules: Record<string, ExtractionRule> = {}
 ): Promise<PageReport> {
   try {
     let response: FetchResult;
@@ -1759,7 +1779,7 @@ async function analyzePage(
       };
     }
 
-    return analyzeHtml(url, response, response.text, allowedHosts, robotsRules, options.userAgent);
+    return analyzeHtml(url, response, response.text, allowedHosts, robotsRules, options.userAgent, extractionRules);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown fetch error";
 
@@ -2463,6 +2483,9 @@ export async function analyzeSite(
   const keywords = rawOptions.keywords ?? [];
   const extractTermsEnabled = rawOptions.extractTerms ?? false;
   const topTermsCount = rawOptions.topTermsCount ?? 20;
+  const extractionRules = parseExtractionRules(rawOptions.extract);
+  const extractionRulesEntries = Object.entries(extractionRules);
+  const hasExtractions = extractionRulesEntries.length > 0;
 
   if (rawOptions.render) {
     const { launchRenderBrowser } = await import("./render.js");
@@ -2550,7 +2573,7 @@ export async function analyzeSite(
   );
   emitProgress({ phase: "crawl-start", url: normalizedStartUrl });
   emitProgress({ phase: "page-start", url: normalizedStartUrl, activePages: 1 });
-  const startPage = await analyzePage(normalizedStartUrl, allowedHosts, fetchOptions, {}, renderBrowser);
+  const startPage = await analyzePage(normalizedStartUrl, allowedHosts, fetchOptions, {}, renderBrowser, extractionRules);
   visitedRequestedUrls.add(normalizedStartUrl);
   visitedRequestedUrls.add(startPage.finalUrl);
 
@@ -2667,7 +2690,7 @@ export async function analyzeSite(
     }
 
     const batchPages = await Promise.all(
-      batchUrls.map((url) => analyzePage(url, allowedHosts, fetchOptions, robotsRules, renderBrowser))
+      batchUrls.map((url) => analyzePage(url, allowedHosts, fetchOptions, robotsRules, renderBrowser, extractionRules))
     );
 
     let activePages = batchPages.length;
@@ -2782,6 +2805,10 @@ export async function analyzeSite(
     ? buildContentDedupReport(pages)
     : undefined;
 
+  const extractionSummary = hasExtractions
+    ? summarizeExtractions(pages, extractionRules)
+    : undefined;
+
   let gsc;
   if (rawOptions.gsc) {
     emitProgress({ phase: "analysis-start", stage: "gsc" });
@@ -2842,7 +2869,8 @@ export async function analyzeSite(
     ...(gsc ? { gsc } : {}),
     ...(ga4 ? { ga4 } : {}),
     ...(contentDedup ? { contentDedup } : {}),
-    ...(linkGraph ? { linkGraph } : {})
+    ...(linkGraph ? { linkGraph } : {}),
+    ...(extractionSummary ? { extractionSummary } : {})
   };
   } finally {
     if (renderBrowser) {
