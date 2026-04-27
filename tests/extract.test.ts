@@ -122,6 +122,66 @@ describe("parseExtractionRules", () => {
   });
 });
 
+import { summarizeExtractions } from "../src/extract.js";
+import type { PageReport } from "../src/types.js";
+
+function makePage(url: string, extracted: PageReport["extracted"]): PageReport {
+  return {
+    url,
+    finalUrl: url,
+    status: 200,
+    contentType: "text/html",
+    redirectChain: [],
+    checks: {} as PageReport["checks"],
+    issues: [],
+    discoveredLinks: [],
+    extracted
+  };
+}
+
+describe("summarizeExtractions", () => {
+  it("counts matches and missing-required across pages", () => {
+    const rules = parseExtractionRules({
+      h1: "h1",
+      title: { selector: "title", required: true },
+      faqs: { selector: ".faq h3", all: true, required: true }
+    });
+    const pages: PageReport[] = [
+      makePage("https://a", { h1: "A", title: "Title A", faqs: ["q1"] }),
+      makePage("https://b", { h1: null, title: null, faqs: [] }),
+      makePage("https://c", { h1: "C", title: "Title C", faqs: [] })
+    ];
+    const summary = summarizeExtractions(pages, rules);
+
+    expect(summary.rules).toEqual(["h1", "title", "faqs"]);
+    expect(summary.pagesEvaluated).toBe(3);
+    expect(summary.matchCounts).toEqual({ h1: 2, title: 2, faqs: 1 });
+    expect(summary.missingRequiredCounts).toEqual({ h1: 0, title: 1, faqs: 2 });
+    expect(summary.pagesWithMissingRequired).toBe(2);
+  });
+
+  it("ignores pages without an extracted field", () => {
+    const rules = parseExtractionRules({ h1: "h1" });
+    const pages: PageReport[] = [
+      makePage("https://a", { h1: "A" }),
+      makePage("https://b", undefined)
+    ];
+    const summary = summarizeExtractions(pages, rules);
+    expect(summary.pagesEvaluated).toBe(1);
+    expect(summary.matchCounts).toEqual({ h1: 1 });
+  });
+
+  it("returns zeroed summary for empty rules", () => {
+    expect(summarizeExtractions([], {})).toEqual({
+      rules: [],
+      pagesEvaluated: 0,
+      matchCounts: {},
+      missingRequiredCounts: {},
+      pagesWithMissingRequired: 0
+    });
+  });
+});
+
 import { load } from "cheerio";
 import { runExtractions } from "../src/extract.js";
 

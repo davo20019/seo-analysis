@@ -1,5 +1,5 @@
 import type { load as cheerioLoad } from "cheerio";
-import type { ExtractionRule, ExtractionResult } from "./types.js";
+import type { ExtractionRule, ExtractionResult, ExtractionSummary, PageReport } from "./types.js";
 
 export function parseSelectorGrammar(input: string): ExtractionRule {
   let depth = 0;
@@ -167,4 +167,45 @@ function isMissing(value: string | string[] | null): boolean {
   if (value === null) return true;
   if (Array.isArray(value)) return value.length === 0;
   return false;
+}
+
+export function summarizeExtractions(
+  pages: PageReport[],
+  rules: Record<string, ExtractionRule>
+): ExtractionSummary {
+  const ruleNames = Object.keys(rules);
+  const matchCounts: Record<string, number> = {};
+  const missingRequiredCounts: Record<string, number> = {};
+  for (const name of ruleNames) {
+    matchCounts[name] = 0;
+    missingRequiredCounts[name] = 0;
+  }
+
+  let pagesEvaluated = 0;
+  let pagesWithMissingRequired = 0;
+  for (const page of pages) {
+    if (!page.extracted) continue;
+    pagesEvaluated++;
+    let pageHasMissing = false;
+    for (const name of ruleNames) {
+      const value = page.extracted[name] ?? null;
+      const rule = rules[name];
+      if (!isMissing(value)) {
+        matchCounts[name]++;
+      }
+      if (rule.required && isMissing(value)) {
+        missingRequiredCounts[name]++;
+        pageHasMissing = true;
+      }
+    }
+    if (pageHasMissing) pagesWithMissingRequired++;
+  }
+
+  return {
+    rules: ruleNames,
+    pagesEvaluated,
+    matchCounts,
+    missingRequiredCounts,
+    pagesWithMissingRequired
+  };
 }
