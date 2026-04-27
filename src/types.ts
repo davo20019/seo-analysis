@@ -90,6 +90,7 @@ export interface PageReport {
   keywordMatches?: KeywordMatch[];
   metrics?: PageMetrics;
   linkGraph?: LinkGraphPage;
+  extracted?: ExtractionResult;
 }
 
 export interface PageMetrics {
@@ -309,6 +310,7 @@ export interface SiteReport {
   ga4?: Ga4EnrichmentReport;
   contentDedup?: ContentDedupReport;
   linkGraph?: LinkGraphReport;
+  extractionSummary?: ExtractionSummary;
 }
 
 export interface ContentClusterMember {
@@ -348,6 +350,24 @@ export interface LinkGraphReport {
   damping: number;
   topPages: LinkGraphTopEntry[];
   underLinkedImportantPages: LinkGraphTopEntry[];
+}
+
+export interface ExtractionRule {
+  selector: string;
+  attr?: string;
+  html?: boolean;
+  all?: boolean;
+  required?: boolean;
+}
+
+export type ExtractionResult = Record<string, string | string[] | null>;
+
+export interface ExtractionSummary {
+  rules: string[];
+  pagesEvaluated: number;
+  matchCounts: Record<string, number>;
+  missingRequiredCounts: Record<string, number>;
+  pagesWithMissingRequired: number;
 }
 
 export type AnalyzeProgressPhase =
@@ -409,5 +429,6 @@ export interface AnalyzeOptions {
   ga4ServiceAccountKeyFile?: string;
   contentDedup?: boolean;
   linkGraph?: boolean;
+  extract?: Record<string, string | ExtractionRule>;
   onProgress?: (event: AnalyzeProgressEvent) => void;
 }
