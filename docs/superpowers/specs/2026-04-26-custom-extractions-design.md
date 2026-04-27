@@ -11,7 +11,7 @@ Let users define CSS-selector-based extraction rules to pull arbitrary fields of
 - Full per-page extracted values in the JSON report (`PageReport.extracted`).
 - A site-level summary in the JSON report (`SiteReport.extractionSummary`).
 - A small "Custom extractions" summary block in the HTML/text/PDF reports — counts only, never per-page dumps.
-- Optional per-rule `required: true` emits a low-severity `extraction-missing` issue, hooking into the existing `--fail-on` machinery.
+- Optional per-rule `required: true` emits a low-severity `EXTRACTION_MISSING_REQUIRED` issue, hooking into the existing `--fail-on` machinery.
 
 Closes the largest remaining feature gap against Screaming Frog SEO Spider for technical-SEO crawling and is the v0.7 differentiator: scriptable extractions that gate CI builds.
 
@@ -32,7 +32,7 @@ Closes the largest remaining feature gap against Screaming Frog SEO Spider for t
 | 3 | Rule shape | String shorthand for the simple case + object form for `all` (multi-match) and `required`. |
 | 4 | Selector grammar | `selector` (text), `selector@attr` (attribute), `selector#html` (inner HTML). Suffix splits on the *last* top-level `@` or `#` (ignoring anything inside `[…]`). |
 | 5 | Human report integration | Summary section only — rule list, match coverage, missing-required counts. Full per-page detail stays in JSON. |
-| 6 | Missing required fields | Low-severity `extraction-missing` issue per page per missing required rule. Hooks into existing `--fail-on` automatically. |
+| 6 | Missing required fields | Low-severity `EXTRACTION_MISSING_REQUIRED` issue per page per missing required rule. Hooks into existing `--fail-on` automatically. |
 | 7 | Default behavior | Off. No rules = no `extracted` on pages, no summary, no work done. |
 
 ### Open-source upgrade considerations
@@ -40,7 +40,7 @@ Closes the largest remaining feature gap against Screaming Frog SEO Spider for t
 The package is published to npm as `@davo20019/seo-audit` (current v0.6.0 → planned v0.7.0). Extractions are **opt-in**: no rules = identical behavior to v0.6.0. Three OSS-relevant considerations:
 
 - **JSON shape grows additively only when in use.** New optional `PageReport.extracted` and `SiteReport.extractionSummary`. Both omitted when no rules are configured. v0.6 consumers ignoring unknown fields are unaffected.
-- **No new `--fail-on` regression risk.** The `extraction-missing` issue only fires when the user opts into a `required: true` rule. Existing `--fail-on` users without any `--extract*` flag see no behavior change.
+- **No new `--fail-on` regression risk.** The `EXTRACTION_MISSING_REQUIRED` issue only fires when the user opts into a `required: true` rule. Existing `--fail-on` users without any `--extract*` flag see no behavior change.
 - **No new dependencies.** Uses the cheerio instance already loaded per page in `analyzer.ts`.
 
 ## Public API
@@ -152,7 +152,7 @@ summarizeExtractions(
 
 - Accept `options.extract` (already-parsed `Record<string, ExtractionRule>` if from library, or pre-parsed by CLI).
 - After the existing `cheerio.load(html)` at line 1149, call `runExtractions` and attach `extracted` to the page's report.
-- For each name in `missingRequired`, append an issue with code `extraction-missing`, severity `low`, message `Required extraction "<name>" returned no match for selector "<selector>"`.
+- For each name in `missingRequired`, append an issue with code `EXTRACTION_MISSING_REQUIRED`, severity `low`, message `Required extraction "<name>" returned no match for selector "<selector>"`.
 - After the page loop, if rules are configured, call `summarizeExtractions(pages, rules)` and attach to `SiteReport.extractionSummary`.
 
 ### `src/cli.ts` changes
@@ -185,7 +185,7 @@ summarizeExtractions(
 
 ```ts
 {
-  code: "extraction-missing",
+  code: "EXTRACTION_MISSING_REQUIRED",
   severity: "low",
   url: <page url>,
   message: `Required extraction "<name>" returned no match for selector "<selector>"`
@@ -245,7 +245,7 @@ Hooks into `--fail-on low` automatically. Documented in README and CHANGELOG.
 
 - Run `analyzeSite` against a small fixture HTML with two pages.
 - Assert each page's `PageReport.extracted` matches expected values.
-- Assert `extraction-missing` issue is emitted on the page where a required field is absent.
+- Assert `EXTRACTION_MISSING_REQUIRED` issue is emitted on the page where a required field is absent.
 - Assert `SiteReport.extractionSummary` matches expected counts.
 - Assert no `extracted` / `extractionSummary` fields when `extract` option is omitted.
 
@@ -278,7 +278,7 @@ New "Custom extractions" section under "Useful Options" with:
   with `--extract '<json>'` or `--extract-file <path>`. Selector grammar:
   `selector` (text), `selector@attr` (attribute), `selector#html` (inner HTML).
   Object form supports `all: true` (multi-match) and `required: true`
-  (low-severity `extraction-missing` issue, integrates with `--fail-on`).
+  (low-severity `EXTRACTION_MISSING_REQUIRED` issue, integrates with `--fail-on`).
 - **Added:** `AnalyzeOptions.extract` for library consumers, plus
   `PageReport.extracted` and `SiteReport.extractionSummary` in the JSON report.
 - **Added:** "Custom extractions" summary section in HTML/text/PDF reports.
