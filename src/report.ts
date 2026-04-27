@@ -6,6 +6,7 @@ import type {
   Ga4EnrichmentReport,
   Issue,
   LinkGraphReport,
+  LogAnalysisReport,
   PrioritySummaryEntry,
   Severity,
   SiteReport,
@@ -387,4 +388,51 @@ export async function renderPdfReport(report: SiteReport): Promise<Buffer> {
   } finally {
     await browser.close();
   }
+}
+
+export function renderLogAnalysisReport(r: LogAnalysisReport): string {
+  const date = new Date().toISOString().slice(0, 19).replace("T", " ");
+  const botRows = r.bots
+    .map((b) => `<tr><td><code>${escapeHtml(b.name)}</code></td><td>${b.hits}</td><td>${b.uniqueUrls}</td><td>${b.uniqueIps}</td></tr>`)
+    .join("\n");
+  const orphanRows = r.orphans
+    .map((o) => `<tr><td><a href="${escapeHtml(o.url)}">${escapeHtml(o.url)}</a></td><td>${o.hits}</td><td>${escapeHtml(o.bots.join(", "))}</td></tr>`)
+    .join("\n");
+  const staleRows = r.stalePriorities
+    .map((s) => `<tr><td><a href="${escapeHtml(s.url)}">${escapeHtml(s.url)}</a></td><td>${s.pageRank.toFixed(4)}</td><td>${s.daysSinceLastCrawl ?? "never"}</td><td>${s.hitsInWindow}</td></tr>`)
+    .join("\n");
+  const mismatchRows = r.statusMismatches
+    .map((m) => `<tr><td><a href="${escapeHtml(m.url)}">${escapeHtml(m.url)}</a></td><td>${m.crawlStatus}</td><td>${m.worstStatus}</td><td>${m.hits}</td></tr>`)
+    .join("\n");
+  const baseline = r.baselineCrawl !== null
+    ? `<p>Crawl baseline: <code>${escapeHtml(r.baselineCrawl.crawledAt)}</code> (${r.baselineCrawl.daysOld} days old, ${r.baselineCrawl.pages} pages)</p>`
+    : `<p class="muted">No persisted crawl found for this host. Run a regular audit to enable joined findings.</p>`;
+  return `<!doctype html>
+<html><head><meta charset="utf-8" /><title>SEO Audit — Log Analysis</title>
+<style>body{font:14px/1.4 -apple-system,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#222}h1,h2{margin-top:1.5em}table{border-collapse:collapse;width:100%}th,td{padding:.4em .6em;border-bottom:1px solid #eee;text-align:left}.muted{color:#888}code{font-family:ui-monospace,monospace;background:#f4f4f4;padding:.05em .25em;border-radius:3px}</style>
+</head><body>
+<h1>Log analysis</h1>
+<p class="muted">${escapeHtml(r.source)} · format=<code>${escapeHtml(r.format)}</code> · generated ${date}</p>
+<p>Log window: <code>${escapeHtml(r.timeWindow.earliest)}</code> → <code>${escapeHtml(r.timeWindow.latest)}</code> (${r.timeWindow.durationHours}h)</p>
+${baseline}
+<p>Total lines: ${r.totalLines} · parse errors: ${r.parseErrors} · spoofed hits: ${r.spoofedHits} · unverified: ${r.unverifiedBotHits}</p>
+
+<h2>Bots</h2>
+<table><thead><tr><th>Bot</th><th>Hits</th><th>Unique URLs</th><th>Unique IPs</th></tr></thead><tbody>${botRows}</tbody></table>
+
+${r.orphans.length > 0 ? `<h2>Orphan pages (${r.orphans.length})</h2>
+<table><thead><tr><th>URL</th><th>Hits</th><th>Bots</th></tr></thead><tbody>${orphanRows}</tbody></table>` : ""}
+
+${r.stalePriorities.length > 0 ? `<h2>Stale priority pages (${r.stalePriorities.length})</h2>
+<table><thead><tr><th>URL</th><th>PageRank</th><th>Days since last crawl</th><th>Hits in window</th></tr></thead><tbody>${staleRows}</tbody></table>` : ""}
+
+${r.statusMismatches.length > 0 ? `<h2>Status mismatches (${r.statusMismatches.length})</h2>
+<table><thead><tr><th>URL</th><th>Crawl status</th><th>Worst log status</th><th>Hits</th></tr></thead><tbody>${mismatchRows}</tbody></table>` : ""}
+
+${r.issues.length > 0 ? `<h2>Issues</h2>
+<table><thead><tr><th>Severity</th><th>Code</th><th>Message</th></tr></thead><tbody>${
+  r.issues.map((i) => `<tr><td>${i.severity}</td><td><code>${escapeHtml(i.code)}</code></td><td>${escapeHtml(i.message)}</td></tr>`).join("\n")
+}</tbody></table>` : ""}
+
+</body></html>`;
 }
